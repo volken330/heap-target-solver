@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heap Target Solver</title>
+<meta name="description" content="OoT NTSC 1.2: every way to fill the heap up to an address, simplest first.">
+<style>
+:root { --bg:#fbfaf7; --ink:#1c1d1f; --muted:#6b6f75; --line:#e2dfd7; --field:#ffffff; --accent:#2f6f5e; --accent-ink:#fff; --ok:#2f7d4a; --bad:#b2402f;
+  --free:#e9e6de; --actor:#5b8db8; --code:#8a6fb0; --other:#a3a39b; --new:#e08a2e; --target:#c0392b;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#141618; --ink:#e8e6e1; --muted:#9a9fa6; --line:#30343a; --field:#1c1f23; --accent:#62b59c; --accent-ink:#0e1412; --ok:#6cc28a; --bad:#e8806e; --free:#2a2e33; --actor:#6fa3cf; --code:#a58ccc; --other:#7d7d76; --new:#f0a04b; --target:#ff6b5b; } }
+:root[data-theme="dark"] { --bg:#141618; --ink:#e8e6e1; --muted:#9a9fa6; --line:#30343a; --field:#1c1f23; --accent:#62b59c; --accent-ink:#0e1412; --ok:#6cc28a; --bad:#e8806e; --free:#2a2e33; --actor:#6fa3cf; --code:#a58ccc; --other:#7d7d76; --new:#f0a04b; --target:#ff6b5b; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+main { max-width: 760px; margin: 0 auto; padding: 40px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+h2 { font-size: 15px; margin: 26px 0 8px; }
+p.sub { margin: 0 0 28px; color: var(--muted); }
+label.l { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+input { font: 15px var(--mono); color: var(--ink); background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; width: 100%; min-width: 0; }
+input[type=file] { font: 13px var(--sans); padding: 6px; }
+input[type=checkbox], input[type=radio] { width: auto; padding: 0; margin-top: 4px; flex: none; }
+.seg label { display: flex; align-items: center; gap: 4px; }
+input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.one { margin-top: 18px; max-width: 260px; }
+.status { font-size: 13px; color: var(--muted); margin-top: 6px; min-height: 1.4em; }
+.status.err { color: var(--bad); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin: 6px 0; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.strip { position: relative; height: 26px; background: var(--free); border-radius: 4px; overflow: hidden; }
+.strip div { position: absolute; top: 0; bottom: 0; min-width: 1px; }
+.strip .mark { background: var(--target); width: 2px; }
+.axis { display: flex; justify-content: space-between; font: 11px var(--mono); color: var(--muted); margin-top: 2px; }
+.blocks { max-height: 280px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; margin-top: 8px; position: relative; }
+table { border-collapse: collapse; width: 100%; font: 12.5px var(--mono); }
+td, th { padding: 3px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-family: var(--sans); color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--bg); }
+td.c { white-space: normal; font-family: var(--sans); }
+tr.free td { color: var(--muted); }
+tr.new td { background: color-mix(in srgb, var(--new) 16%, transparent); }
+tr.tgt td { box-shadow: inset 0 2px 0 var(--target); font-weight: 700; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+.tag { font: 600 11px var(--sans); color: var(--new); margin-left: 6px; }
+fieldset { border: 0; padding: 0; margin: 22px 0 0; }
+legend.l { font-size: 13px; color: var(--muted); margin-bottom: 6px; padding: 0; }
+.fillers { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px 18px; }
+.filler { display: flex; align-items: flex-start; gap: 8px; border-bottom: 1px solid var(--line); padding: 5px 0; font-size: 14px; cursor: pointer; }
+.filler.off { color: var(--muted); }
+.filler small, .brk small { color: var(--muted); display: block; font-size: 11.5px; line-height: 1.25; }
+.brk { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.brk.skip { color: var(--muted); }
+button { font: 600 15px var(--sans); background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 6px; padding: 9px 20px; margin-top: 22px; cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+#out { margin-top: 28px; }
+.verdict { font-weight: 600; font-size: 16px; margin: 0 0 10px; }
+.verdict.ok { color: var(--ok); } .verdict.bad { color: var(--bad); }
+ol { padding-left: 22px; margin: 8px 0; } li { margin: 7px 0; }
+.addr { font-family: var(--mono); }
+.muted { color: var(--muted); font-size: 13px; }
+.theme { position: fixed; top: 10px; right: 12px; background: none; color: var(--muted); border: 1px solid var(--line); font: 12px var(--sans); padding: 3px 8px; margin: 0; }
+.modes, .seg { display: flex; gap: 18px; flex-wrap: wrap; font-size: 14px; margin-bottom: 14px; }
+.seg { gap: 14px; margin: 6px 0 0; }
+.modes input, .seg input { margin-right: 6px; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; max-width: 520px; }
+@media (max-width: 520px) { .pair { grid-template-columns: 1fr; } }
+.row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.row button { margin-top: 22px; } .row span { margin-top: 22px; }
+.igroup { margin-top: 10px; } .igroup b { display: block; font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+.opt { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin: 10px 0; }
+.opt h3 { font-size: 15px; margin: 0 0 2px; }
+.opt details { margin-top: 6px; } .opt summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.alts { color: var(--muted); font-weight: 400; }
+.model { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin: 0 0 8px; font-size: 13px; }
+.model summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.model .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
+@media (max-width: 620px) { .model .cols { grid-template-columns: 1fr; } }
+.model ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted); } .model li { margin: 3px 0; }
+.model code, .sub code { font: 12px var(--mono); }
+.step { margin-top: 30px; }
+.step h2 { display: flex; align-items: center; gap: 10px; font-size: 17px; margin: 0 0 12px; }
+.step h2 .n { font: 600 13px var(--sans); background: var(--accent); color: var(--accent-ink); border-radius: 50%; width: 24px; height: 24px; display: inline-grid; place-items: center; }
+.step h3 { font-size: 14px; margin: 20px 0 6px; }
+.choices { display: grid; gap: 8px; margin-bottom: 16px; }
+.choice { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer; font-size: 14px; }
+.choice:has(input:checked) { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.choice small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.choice input { margin-top: 4px; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<button class="theme" id="theme" type="button">Theme</button>
+<main>
+  <h1>Heap target solver</h1>
+  <p class="sub">Finds every way it can to fill Ocarina of Time's actor heap up to an address you choose, simplest first. NTSC 1.2 only.</p>
+
+
+  <section class="step">
+    <h2><span class="n">1</span>Starting point</h2>
+    <div class="choices" role="radiogroup" aria-label="Starting point">
+      <label class="choice"><input type="radio" name="mode" value="dump" checked><span><b>Option 1: a RAM dump</b><small>The solver can also remove actors already in the scene: break pots and crates, cut bushes, kill enemies, collect items.</small></span></label>
+      <label class="choice"><input type="radio" name="mode" value="addr"><span><b>Option 2: where free memory starts</b><small>The solver can only add actors Link makes himself.</small></span></label>
+    </div>
+
+    <div id="dumpMode">
+      <label class="l" for="dump">RAM dump</label>
+      <input type="file" id="dump">
+      <div class="status" id="dumpStatus">Dolphin Wii VC MEM1 or raw RDRAM. It stays in your browser.</div>
+      <div id="now" hidden>
+        <h3>Heap in the dump</h3>
+        <div id="heapNow"></div>
+        <h3>Actors in the scene the solver may remove</h3>
+        <div id="scene"></div>
+      </div>
+    </div>
+    <div id="addrMode" hidden>
+      <div class="pair">
+        <div><label class="l" for="startAddr">Free memory starts at</label><input id="startAddr" placeholder="801F67E0" autocomplete="off"></div>
+        <div><label class="l">Link is</label><div class="seg"><label><input type="radio" name="age" value="child" checked> Child</label><label><input type="radio" name="age" value="adult"> Adult</label></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="step">
+    <h2><span class="n">2</span>End point</h2>
+    <div class="one" style="margin-top:0"><label class="l" for="addr">Fill the heap up to</label><input id="addr" placeholder="801F8550" autocomplete="off"></div>
+  </section>
+
+  <section class="step">
+    <h2><span class="n">3</span>What Link can use</h2>
+    <div id="items"></div>
+  </section>
+
+  <div class="row"><button id="go" type="button" disabled>Find options</button><span class="muted" id="progress"></span></div>
+  <div id="out"></div>
+
+  <details class="model" open style="margin-top:40px">
+    <summary>What it models</summary>
+    <div class="cols">
+      <div><b>Modeled from the decomp</b><ul>
+        <li>Heap allocation exactly as <code>__osMalloc</code>: first fit from the bottom, 16-byte sizes, 0x30-byte headers, a gap split only when the rest is bigger than a header.</li>
+        <li>Top-down allocation (<code>__osMallocR</code>) for persistent actor code, and one shared 0x24E0 block for absolute code (songs, spells, magic arrows).</li>
+        <li>Freeing as <code>__osFree</code>: a freed block merges with free neighbours.</li>
+        <li>Spawning an actor: its code first if not loaded, then the actor, then what its Init allocates (arrow tables, Farore's Wind table, 3 bugs, 19 blue flames).</li>
+        <li>Removing an actor frees it and its tables; normal code is freed with its last actor.</li>
+        <li>Pot, crate and bush drops as <code>Item_DropCollectible</code> decides them for Link's age, items, health and collected flags.</li>
+        <li>At most 3 bombs, bombchus and explosions out at once; one drawn or held item at a time.</li>
+      </ul></div>
+      <div><b>Not modeled</b><ul>
+        <li>Timing. Things that go away on their own (bombs, nuts, the boomerang, drops) stay until a step says they go.</li>
+        <li>Anything else in the scene allocating or freeing meanwhile (enemies, timers, room changes).</li>
+        <li>Enemy drops and death effects when one is killed.</li>
+        <li>Sizes are the simulator's NTSC 1.2 export; other versions differ.</li>
+      </ul></div>
+    </div>
+  </details>
+</main>
+<script id="engineSrc">
+const ACTORS = [["Player",2692,0,0,2],null,["En_Test",2328,22704,0,5],null,["En_GirlA",452,10528,0,6],null,null,["En_Part",332,5648,0,7],["En_Light",340,3568,0,7],["En_Door",456,3648,2,10],["En_Box",492,6976,0,11],["Bg_Dy_Yoseizo",14500,11776,0,6],["Bg_Hidan_Firewall",400,1888,0,1],["En_Poh",920,16784,0,5],["En_Okuta",940,9696,0,5],["Bg_Ydan_Sp",568,6000,0,1],["En_Bom",504,3792,2,3],["En_Wallmas",772,6672,0,5],["En_Dodongo",1816,11680,0,5],["En_Firefly",868,8560,0,5],["En_Horse",1004,49760,0,1],["En_Item00",412,0,0,8],["En_Arrow",592,5872,2,7],null,["En_Elf",704,18880,0,7],["En_Niw",1960,13104,0,6],null,["En_Tite",872,11680,0,5],["En_Reeba",716,6768,0,8],["En_Peehat",1052,14080,0,5],["En_Butte",600,5584,0,7],null,["En_Insect",796,9504,0,7],["En_Fish",580,8464,0,7],null,["En_Holl",324,4048,2,10],["En_Scene_Change",320,304,0,6],["En_Zf",1368,27392,0,5],["En_Hata",620,1424,0,6],["Boss_Dodongo",6160,39648,0,9],["Boss_Goma",2828,24448,0,9],["En_Zl1",508,15872,0,4],["En_Viewer",1512,11984,0,7],["En_Goma",916,11408,0,5],["Bg_Pushbox",344,768,0,1],["En_Bubble",592,5152,0,5],["Door_Shutter",360,8832,2,10],["En_Dodojr",688,7840,0,5],["En_Bdfire",468,2960,0,5],null,["En_Boom",492,2240,2,8],["En_Torch2",2692,10144,0,9],["En_Bili",528,8912,0,5],["En_Tp",456,7760,0,5],null,["En_St",1388,11376,0,5],["En_Bw",796,13168,0,5],["En_A_Obj",440,0,0,6],["En_Eiyer",708,7264,0,5],["En_River_Sound",320,2448,0,1],["En_Horse_Normal",792,9760,0,1],["En_Ossan",712,26080,0,4],["Bg_Treemouth",352,5728,0,1],["Bg_Dodoago",576,3504,0,1],["Bg_Hidan_Dalm",748,2128,0,1],["Bg_Hidan_Hrock",564,2096,0,1],["En_Horse_Ganon",664,3456,0,1],["Bg_Hidan_Rock",440,4336,0,1],["Bg_Hidan_Rsekizou",760,3040,0,1],["Bg_Hidan_Sekizou",772,5200,0,1],["Bg_Hidan_Sima",508,3872,0,1],["Bg_Hidan_Syoku",348,1120,0,1],["En_Xc",812,26512,0,4],["Bg_Hidan_Curtain",404,2720,0,6],["Bg_Spot00_Hanebasi",368,4368,0,1],["En_Mb",1276,16944,0,5],["En_Bombf",512,5232,0,6],["En_Zl2",624,18224,0,4],["Bg_Hidan_Fslift",348,1232,0,1],["En_OE2",388,224,0,4],["Bg_Ydan_Hasi",348,1968,0,1],["Bg_Ydan_Maruta",564,1760,0,6],["Boss_Ganondrof",1384,19824,0,9],null,["En_Am",892,9216,0,5],["En_Dekubaba",1032,15008,0,5],["En_M_Fire1",396,416,2,8],["En_M_Thunder",444,5616,2,7],["Bg_Ddan_Jd",352,1616,0,1],["Bg_Breakwall",480,3696,0,1],["En_Jj",772,5584,0,7],["En_Horse_Zelda",664,2800,0,1],["Bg_Ddan_Kd",440,2288,0,1],["Door_Warp1",480,17072,0,7],["Obj_Syokudai",492,3136,0,6],["Item_B_Heart",348,1008,0,8],["En_Dekunuts",772,6144,0,5],["Bg_Menkuri_Kaiten",340,400,0,1],["Bg_Menkuri_Eye",416,1184,0,1],["En_Vali",1080,9888,0,5],["Bg_Mizu_Movebg",376,4512,0,1],["Bg_Mizu_Water",336,3280,0,1],["Arms_Hook",520,3424,2,7],["En_fHG",644,10544,0,1],["Bg_Mori_Hineri",348,3328,0,1],["En_Bb",792,15568,0,5],["Bg_Toki_Hikari",324,3488,0,1],["En_Yukabyun",400,1552,0,5],["Bg_Toki_Swd",396,5712,0,6],["En_Fhg_Fire",500,9760,0,9],["Bg_Mjin",348,992,0,1],["Bg_Hidan_Kousi",348,1408,0,6],["Door_Toki",344,352,0,1],["Bg_Hidan_Hamstep",568,3760,0,1],["En_Bird",460,1216,0,6],null,null,null,null,["En_Wood02",404,4576,0,6],null,null,null,null,["En_Lightbox",340,1152,0,6],["En_Pu_box",344,832,0,1],null,null,["En_Trap",476,4768,0,1],["En_Arow_Trap",324,336,0,6],["En_Vase",316,256,0,6],null,["En_Ta",728,14784,0,4],["En_Tk",1888,7728,0,4],["Bg_Mori_Bigst",348,2352,0,1],["Bg_Mori_Elevator",356,2800,0,1],["Bg_Mori_Kaitenkabe",376,1632,0,1],["Bg_Mori_Rakkatenjo",360,2416,0,1],["En_Vm",932,6320,0,5],["Demo_Effect",400,23280,0,1],["Demo_Kankyo",1524,15616,0,1],["Bg_Hidan_Fwbig",400,3296,0,6],["En_Floormas",772,13280,0,5],["En_Heishi1",668,5392,0,4],["En_Rd",860,10416,0,5],["En_Po_Sisters",808,19696,0,5],["Bg_Heavy_Block",360,6384,0,1],["Bg_Po_Event",568,7744,0,1],["Obj_Mure",412,4112,0,7],["En_Sw",1224,14320,0,4],["Boss_Fd",17296,29488,0,9],["Object_Kankyo",5712,12832,0,7],["En_Du",524,6816,0,4],["En_Fd",12752,11456,0,5],["En_Horse_Link_Child",660,7680,0,1],["Door_Ana",396,1648,0,7],["Bg_Spot02_Objects",356,4944,0,1],["Bg_Haka",344,1728,0,1],["Magic_Wind",356,7424,1,7],["Magic_Fire",412,8912,1,7],null,["En_Ru1",908,30368,0,4],["Boss_Fd2",5740,15664,0,9],["En_Fd_Fire",412,3344,0,5],["En_Dh",788,6864,0,5],["En_Dha",848,4096,0,5],["En_Rl",412,3808,0,4],["En_Encount1",352,2912,0,6],["Demo_Du",420,14304,0,4],["Demo_Im",748,16240,0,4],["Demo_Tre_Lgt",364,1808,0,7],["En_Fw",1776,6064,0,5],["Bg_Vb_Sima",364,1808,0,1],["En_Vb_Ball",420,4512,0,9],["Bg_Haka_Megane",348,1024,0,6],["Bg_Haka_MeganeBG",348,1728,0,1],["Bg_Haka_Ship",360,2624,0,1],["Bg_Haka_Sgami",808,3104,0,6],null,["En_Heishi2",980,8704,0,4],["En_Encount2",2576,4656,0,5],["En_Fire_Rock",464,4368,0,5],["En_Brob",688,4336,0,5],["Mir_Ray",672,6336,0,7],["Bg_Spot09_Obj",344,1296,0,1],["Bg_Spot18_Obj",348,2256,0,1],["Boss_Va",936,94704,0,9],["Bg_Haka_Tubo",500,2592,0,1],["Bg_Haka_Trap",652,5584,0,1],["Bg_Haka_Huta",348,2720,0,1],["Bg_Haka_Zou",424,4592,0,6],["Bg_Spot17_Funen",316,592,0,0],["En_Syateki_Itm",456,3488,0,6],["En_Syateki_Man",540,3520,0,4],["En_Tana",316,672,0,6],["En_Nb",792,17872,0,4],["Boss_Mo",5500,65712,0,9],["En_Sb",504,5184,0,5],["En_Bigokuta",884,11024,0,5],["En_Karebaba",640,6384,0,5],["Bg_Bdan_Objects",428,4816,0,1],["Demo_Sa",420,11040,0,4],["Demo_Go",400,3424,0,4],["En_In",920,11680,0,4],["En_Tr",728,6400,0,4],["Bg_Spot16_Bombstone",520,5440,0,6],null,["Bg_Hidan_Kowarerukabe",436,3792,0,1],["Bg_Bombwall",660,2240,0,1],["Bg_Spot08_Iceblock",396,4160,0,1],["En_Ru2",772,11648,0,4],["Obj_Dekujr",404,1600,0,4],["Bg_Mizu_Uzu",344,464,0,6],["Bg_Spot06_Objects",448,5136,0,6],["Bg_Ice_Objects",356,3904,0,6],["Bg_Haka_Water",324,2016,0,6],null,["En_Ma2",628,4192,0,4],["En_Bom_Chu",468,5792,0,3],["En_Horse_Game_Check",404,4304,0,1],["Boss_Tw",1700,88832,0,9],["En_Rr",9140,9520,0,5],["En_Ba",944,7888,0,5],["En_Bx",648,2800,0,5],["En_Anubice",772,4784,0,5],["En_Anubice_Fire",484,3520,0,5],["Bg_Mori_Hashigo",448,2240,0,1],["Bg_Mori_Hashira4",348,1424,0,1],["Bg_Mori_Idomizu",336,1600,0,1],["Bg_Spot16_Doughnut",324,1456,0,6],["Bg_Bdan_Switch",464,5168,0,0],["En_Ma1",512,4832,0,4],["Boss_Ganon",1804,155104,0,9],["Boss_Sst",2696,50624,0,9],null,null,["En_Ny",680,6448,0,5],["En_Fr",948,10896,0,4],["Item_Shield",508,2576,0,7],["Bg_Ice_Shelter",500,4656,0,1],["En_Ice_Hono",428,4592,0,7],["Item_Ocarina",324,2000,0,7],null,null,["Magic_Dark",340,6224,1,7],["Demo_6K",644,11536,0,6],["En_Anubice_Tag",328,720,0,0],["Bg_Haka_Gate",356,4240,0,6],["Bg_Spot15_Saku",368,832,0,7],["Bg_Jya_Goroiwa",428,1920,0,6],["Bg_Jya_Zurerukabe",352,1712,0,1],null,["Bg_Jya_Cobra",4500,7456,0,6],["Bg_Jya_Kanaami",348,944,0,1],["Fishing",1344,109232,0,4],["Obj_Oshihiki",452,6832,0,6],["Bg_Gate_Shutter",364,1152,0,7],["Eff_Dust",1368,5088,0,4],["Bg_Spot01_Fusya",336,672,0,1],["Bg_Spot01_Idohashira",356,3072,0,6],["Bg_Spot01_Idomizu",328,784,0,1],["Bg_Po_Syokudai",416,2384,0,6],["Bg_Ganon_Otyuka",380,9792,0,6],["Bg_Spot15_Rrbox",372,3552,0,1],["Bg_Umajump",340,400,0,6],null,["Arrow_Fire",348,7872,1,7],["Arrow_Ice",348,7904,1,7],["Arrow_Light",348,7920,1,7],null,null,["Item_Etcetera",336,2256,0,6],["Obj_Kibako",396,3328,0,6],["Obj_Tsubo",400,4080,0,6],["En_Wonder_Item",448,3376,0,6],["En_Ik",1228,17984,0,9],["Demo_Ik",420,5392,0,4],["En_Skj",752,14656,0,5],["En_Skjneedle",472,784,0,5],["En_G_Switch",4840,6192,0,6],["Demo_Ext",372,2368,0,4],["Demo_Shd",324,9232,0,7],["En_Dns",696,5008,0,1],["Elf_Msg",320,1520,0,7],["En_Honotrap",564,5456,0,6],["En_Tubo_Trap",412,3232,0,6],["Obj_Ice_Poly",476,2480,0,6],["Bg_Spot03_Taki",360,2288,0,1],["Bg_Spot07_Taki",344,1472,0,1],["En_Fz",3012,8208,0,5],["En_Po_Relay",716,5904,0,4],["Bg_Relay_Objects",348,1968,0,1],["En_Diving_Game",904,6576,0,4],["En_Kusa",400,5344,0,6],["Obj_Bean",488,10128,0,1],["Obj_Bombiwa",392,1392,0,6],null,null,["Obj_Switch",584,7616,0,0],["Obj_Elevator",356,960,0,1],["Obj_Lift",352,2592,0,1],["Obj_Hsblock",344,1488,0,1],["En_Okarina_Tag",336,5376,0,6],["En_Yabusame_Mark",512,1744,0,6],["En_Goroiwa",452,9152,0,6],["En_Ex_Ruppy",340,4288,0,6],["En_Toryo",720,3216,0,4],["En_Daiku",828,5952,0,4],null,["En_Nwc",1828,2624,0,6],["En_Blkobj",348,1376,0,6],["Item_Inbox",320,352,0,4],["En_Ge1",684,8240,0,4],["Obj_Blockstop",316,416,0,6],["En_Sda",316,5888,0,9],["En_Clear_Tag",500,46496,0,9],["En_Niw_Lady",748,6400,0,4],["En_Gm",704,3376,0,4],["En_Ms",576,1776,0,4],["En_Hs",672,2976,0,4],["Bg_Ingate",344,912,0,6],["En_Kanban",476,12624,0,6],["En_Heishi3",696,2512,0,4],["En_Syateki_Niw",1104,8336,0,6],["En_Attack_Niw",728,4704,0,5],["Bg_Spot01_Idosoko",344,528,0,1],["En_Sa",732,8816,0,4],["En_Wonder_Talk",344,1680,0,6],["Bg_Gjyo_Bridge",344,1280,0,6],["En_Ds",480,3104,0,4],["En_Mk",632,3728,0,4],["En_Bom_Bowl_Man",596,5440,0,4],["En_Bom_Bowl_Pit",14068,2416,0,6],["En_Owl",1028,15264,0,4],["En_Ishi",396,37200,0,6],["Obj_Hana",392,784,0,6],["Obj_Lightswitch",436,5168,0,0],["Obj_Mure2",376,2592,0,6],["En_Go",1720,17984,0,4],["En_Fu",672,3408,0,4],null,["En_Changer",348,2528,0,6],["Bg_Jya_Megami",812,4576,0,1],["Bg_Jya_Lift",348,1360,0,1],["Bg_Jya_Bigmirror",356,2112,0,1],["Bg_Jya_Bombchuiwa",424,2864,0,1],["Bg_Jya_Amishutter",344,912,0,1],["Bg_Jya_Bombiwa",440,1472,0,1],["Bg_Spot18_Basket",524,4080,0,6],null,["En_Ganon_Organ",320,28672,0,9],["En_Siofuki",400,3504,0,1],["En_Stream",328,1424,0,1],null,["En_Mm",784,5664,0,4],["En_Ko",788,16704,0,4],["En_Kz",712,5536,0,4],["En_Weather_Tag",324,3824,0,6],["Bg_Sst_Floor",348,1376,0,1],["En_Ani",676,3440,0,4],["En_Ex_Item",372,4464,0,6],["Bg_Jya_Ironobj",420,3504,0,6],["En_Js",640,2512,0,4],["En_Jsjutan",360,22816,0,4],["En_Cs",820,4656,0,4],["En_Md",788,9840,0,4],["En_Hy",804,14656,0,4],["En_Ganon_Mant",5880,16928,0,9],["En_Okarina_Effect",324,960,0,7],["En_Mag",58136,20240,0,6],["Door_Gerudo",348,1520,0,7],["Elf_Msg2",320,1136,0,1],["Demo_Gt",408,22016,0,6],["En_Po_Field",716,14960,0,5],["Efc_Erupc",6332,2784,0,7],["Bg_Zg",348,1136,0,4],["En_Heishi4",760,3840,0,4],["En_Zl3",1040,32336,0,4],["Boss_Ganon2",2260,77344,0,9],["En_Kakasi",508,3392,0,4],["En_Takara_Man",552,2240,0,4],["Obj_Makeoshihiki",316,1168,0,6],["Oceff_Spot",368,3888,1,7],["End_Title",320,16688,0,7],null,["En_Torch",316,240,0,7],["Demo_Ec",408,14432,0,4],["Shot_Sun",408,1728,0,6],["En_Dy_Extra",356,1408,0,6],["En_Wonder_Talk2",352,1696,0,7],["En_Ge2",764,6560,0,4],["Obj_Roomtimer",324,592,0,5],["En_Ssh",1476,9712,0,4],["En_Sth",684,16560,0,4],["Oceff_Wipe",320,3408,1,7],["Oceff_Storm",328,7072,1,7],["En_Weiyer",704,6656,0,5],["Bg_Spot05_Soko",348,800,0,6],["Bg_Jya_1flift",428,1680,0,1],["Bg_Jya_Haheniron",420,2032,0,6],["Bg_Spot12_Gate",348,1040,0,1],["Bg_Spot12_Saku",348,1216,0,1],["En_Hintnuts",592,6704,0,5],["En_Nutsball",400,1568,0,6],["Bg_Spot00_Break",340,416,0,6],["En_Shopnuts",684,3856,0,5],["En_It",396,400,0,6],["En_GeldB",1236,21424,0,5],["Oceff_Wipe2",320,6000,1,7],["Oceff_Wipe3",320,5968,1,7],["En_Niw_Girl",748,2768,0,4],["En_Dog",640,4528,0,4],["En_Si",400,1280,0,7],["Bg_Spot01_Objects2",368,1216,0,1],["Obj_Comb",420,2144,0,6],["Bg_Spot11_Bakudankabe",416,1600,0,1],["Obj_Kibako2",424,1728,0,1],["En_Dnt_Demo",496,3360,0,6],["En_Dnt_Jiji",664,5392,0,4],["En_Dnt_Nomal",848,11792,0,6],["En_Guest",768,2464,0,4],["Bg_Bom_Guard",360,544,0,6],["En_Hs2",672,1504,0,4],["Demo_Kekkai",492,4832,0,7],["Bg_Spot08_Bakudankabe",564,1696,0,1],["Bg_Spot17_Bakudankabe",340,1760,0,1],null,["Obj_Mure3",352,2000,0,1],["En_Tg",508,1744,0,4],["En_Mu",572,2336,0,4],["En_Go2",1424,24608,0,4],["En_Wf",1228,17168,0,5],["En_Skb",820,6384,0,5],["Demo_Gj",616,15536,0,6],["Demo_Geff",344,2080,0,9],["Bg_Gnd_Firemeiro",360,1344,0,6],["Bg_Gnd_Darkmeiro",352,1984,0,6],["Bg_Gnd_Soulmeiro",400,2144,0,6],["Bg_Gnd_Nisekabe",316,368,0,6],["Bg_Gnd_Iceblock",356,4352,0,6],["En_Gb",1064,5936,0,4],["En_Gs",504,7840,0,6],["Bg_Mizu_Bwall",684,5328,0,1],["Bg_Mizu_Shutter",384,2048,0,6],["En_Daiku_Kakariko",760,5056,0,4],["Bg_Bowl_Wall",376,2432,0,6],["En_Wall_Tubo",352,1264,0,6],["En_Po_Desert",628,3520,0,1],["En_Crow",648,5792,0,5],["Door_Killer",628,5488,0,1],["Bg_Spot11_Oasis",324,1840,0,1],["Bg_Spot18_Futa",340,416,0,6],["Bg_Spot18_Shutter",344,1360,0,6],["En_Ma3",628,4016,0,4],["En_Cow",624,5216,0,4],["Bg_Ice_Turara",424,2096,0,6],["Bg_Ice_Shutter",344,1136,0,6],["En_Kakasi2",488,1824,0,6],["En_Kakasi3",508,4320,0,4],["Oceff_Wipe4",320,4064,1,7],["En_Eg",320,432,0,7],["Bg_Menkuri_Nisekabe",316,336,0,6],["En_Zo",1688,9648,0,4],["Obj_Makekinsuta",324,336,0,7],["En_Ge3",772,2896,0,4],["Obj_Timeblock",364,3136,0,7],["Obj_Hamishi",408,2128,0,6],["En_Zl4",736,18992,0,4],["En_Mm2",684,3520,0,4],["Bg_Jya_Block",340,624,0,6],["Obj_Warp2block",360,2864,0,7]];
+
+// Heap target solver: what to spawn, remove or break so the heap is filled exactly up to an address.
+// Model: NTSC 1.2 ZeldaArena with __osMalloc / __osMallocR / __osFree as in src/libc64/__osMalloc_n64.c,
+// Actor_Spawn overlay loading (normal = low end, persistent = high end, absolute = one shared space),
+// Actor_Delete freeing a normal overlay with its last instance. No timing: anything can go away later.
+/* global ACTORS */
+const Fill = (function () {
+    "use strict";
+    const NODE = 0x30;
+    const ABSOLUTE_SIZE = 0x24e0; // AM_FIELD_SIZE
+    const ADDR = {
+        arena: 0x801db2c0,
+        ovlTable: 0x800e8b70, // gActorOverlayTable: loadedRamAddr +0x10, numLoaded +0x1E, 0x20 per actor
+        actorLists: 0x801ca990, // play->actorCtx.actorLists
+        absoluteSpace: 0x801caac0,
+        collect: 0x801caaa4, tempCollect: 0x801caaa8,
+        script: 0x801caac8,
+        save: 0x8011ac80, // gSaveContext.save
+    };
+    const NEXT = 0x124; // Actor.next
+    const al16 = (n) => (n + 15) & ~15;
+    const hex = (v, w = 8) => (v >>> 0).toString(16).toUpperCase().padStart(w, "0");
+    const s16 = (v) => (v << 16) >> 16;
+
+    const ID = new Map();
+    ACTORS.forEach((a, i) => { if (a) ID.set(a[0], i); });
+    const actor = (name) => {
+        const i = ID.get(name);
+        if (i === undefined) throw new Error(`Unknown actor ${name}.`);
+        const [, instance, overlay, alloc, category] = ACTORS[i];
+        return { name, id: i, instance, overlay, alloc, category };
+    };
+
+    // ---------------- what Link can make ----------------
+    // parts: [actor, extra mallocs]; each part becomes one removable thing unless `together`.
+    // gone: how it goes away; then: what going away spawns (a new removable thing).
+    const SONG = (key, label, oceff, quest, extra) => ({ key, group: "Songs", label, age: "both", need: (s) => s.ocarina && s.quest(quest), parts: [[oceff], ...(extra || [])], together: true, gone: "the song effect ends" });
+    const ACTIONS = [
+        { key: "bomb", group: "Explosives", label: "Bomb", age: "both", need: (s) => s.ammo(2) > 0, parts: [["En_Bom"]], explosive: true, gone: "the bomb explodes" },
+        { key: "chu", group: "Explosives", label: "Bombchu", age: "both", need: (s) => s.item(8) !== 0xff && s.ammo(8) > 0, parts: [["En_Bom_Chu"]], explosive: true, gone: "the bombchu explodes", then: { key: "explosion", label: "Explosion", parts: [["En_Bom"]], explosive: true, gone: "the explosion ends" } },
+        { key: "seed", group: "Shooting", label: "Draw a slingshot seed", age: "child", need: (s) => s.item(6) !== 0xff && s.ammo(6) > 0, parts: [["En_Arrow"]], held: true, gone: "the seed goes (fire it or put the slingshot away)" },
+        { key: "arrow", group: "Shooting", label: "Draw an arrow", age: "adult", need: (s) => s.item(3) !== 0xff && s.ammo(3) > 0, parts: [["En_Arrow", [0x1e, 0x1e]]], held: true, gone: "the arrow goes (fire it or put the bow away)" },
+        ...[["fire", 4, 0x04, "Arrow_Fire"], ["ice", 0x0a, 0x0c, "Arrow_Ice"], ["light", 0x10, 0x12, "Arrow_Light"]].map(([n, slot, id, a]) => ({
+            key: `${n}Arrow`, group: "Shooting", label: `Draw ${n === "ice" ? "an" : "a"} ${n} arrow`, age: "adult", need: (s) => s.item(3) !== 0xff && s.item(slot) === id && s.magic && s.ammo(3) > 0,
+            parts: [["En_Arrow", [0x1e, 0x1e]], [a]], together: true, held: true, gone: `the ${n} arrow goes (fire it or put the bow away)`,
+        })),
+        { key: "nut", group: "Shooting", label: "Throw a Deku nut", age: "both", need: (s) => s.ammo(1) > 0, parts: [["En_Arrow"]], gone: "the nut vanishes (hits nothing)",
+            alt: { gone: "the nut hits something", then: { key: "flash", label: "Nut flash", parts: [["En_M_Fire1"]], gone: "the flash ends" } } },
+        { key: "boomerang", group: "Tools", label: "Throw the boomerang", age: "both", need: (s) => s.item(12) === 0x0e, parts: [["En_Boom"]], gone: "the boomerang comes back" },
+        { key: "hookshot", group: "Tools", label: "Take out the hookshot", age: "adult", need: (s) => s.item(9) === 0x0a || s.item(9) === 0x0b, parts: [["Arms_Hook"]], held: true, gone: "put the hookshot away" },
+        { key: "bugs", group: "Bottles", label: "Release bugs", age: "both", bottle: 0x1d, parts: [["En_Insect"], ["En_Insect"], ["En_Insect"]], gone: "a bug goes (catch it to refill the bottle, or it digs away)", refill: true, note: "3 bugs" },
+        { key: "fish", group: "Bottles", label: "Release a fish", age: "both", bottle: 0x19, parts: [["En_Fish"]], gone: "the fish goes (catch it to refill the bottle, or it dies)", refill: true },
+        { key: "fairy", group: "Bottles", label: "Release a fairy", age: "both", bottle: 0x18, parts: [["En_Elf"]], gone: "the fairy goes (catch it to refill the bottle, or it vanishes)", refill: true },
+        { key: "blueFire", group: "Bottles", label: "Release blue fire", age: "both", bottle: 0x1c, parts: [["En_Ice_Hono"], ...Array(18).fill(["En_Ice_Hono"])], together: true, gone: "the blue fire burns out", note: "spreads into 18 small flames" },
+        { key: "dins", group: "Magic", label: "Cast Din's Fire", age: "both", need: (s) => s.item(5) === 0x05 && s.magic, parts: [["Magic_Fire"]], gone: "Din's Fire ends" },
+        { key: "nayrus", group: "Magic", label: "Cast Nayru's Love", age: "both", need: (s) => s.item(0x11) === 0x13 && s.magic, parts: [["Magic_Dark"]], gone: "Nayru's Love ends" },
+        { key: "farores", group: "Magic", label: "Cast Farore's Wind", age: "both", need: (s) => s.item(0x0b) === 0x0d && s.magic, parts: [["Magic_Wind", [0x36]]], gone: "the Farore's Wind effect ends" },
+        { key: "spin", group: "Magic", label: "Quick magic spin", age: "both", need: (s) => s.magic, parts: [["En_M_Thunder"]], gone: "the spin ends" },
+        { key: "chargedSpin", group: "Magic", label: "Charged magic spin", age: "both", need: (s) => s.magic, parts: [["En_M_Thunder"], ["Eff_Dust"]], together: true, gone: "the spin ends" },
+        SONG("zelda", "Play Zelda's Lullaby", "Oceff_Wipe", 0x0c),
+        SONG("saria", "Play Saria's Song", "Oceff_Wipe3", 0x0e),
+        SONG("epona", "Play Epona's Song", "Oceff_Wipe2", 0x0d),
+        SONG("sun", "Play the Sun's Song", "Oceff_Spot", 0x0f),
+        SONG("time", "Play the Song of Time", "Oceff_Wipe", 0x10),
+        SONG("storms", "Play the Song of Storms", "Oceff_Storm", 0x11, [["En_Okarina_Effect"]]),
+    ];
+    const ITEM00 = ["green rupee", "blue rupee", "red rupee", "heart", "bombs", "arrow", "heart piece", "heart container", "arrows (5)", "arrows (10)", "arrows (30)", "bombs", "nuts", "stick", "magic (large)", "magic (small)", "seeds", "small key", "fairy", "orange rupee", "purple rupee", "Deku shield", "Hylian shield", "Zora tunic", "Goron tunic", "bombs"];
+
+    // ---------------- reading a dump ----------------
+    function fromDump(bytes) {
+        const off = bytes.length === 0x1800000 ? 0xf64120 : 0;
+        const ram = bytes.subarray(off, off + 0x800000);
+        const ok = (a, n) => a >= 0x80000000 && a - 0x80000000 + n <= ram.length;
+        const u8 = (a) => (ok(a, 1) ? ram[a - 0x80000000] : null);
+        const u16 = (a) => (ok(a, 2) ? (ram[a - 0x80000000] << 8) | ram[a - 0x80000000 + 1] : null);
+        const u32 = (a) => (ok(a, 4) ? ((u16(a) << 16) | u16(a + 2)) >>> 0 : null);
+        const f32 = (a) => new DataView(ram.buffer, ram.byteOffset + a - 0x80000000, 4).getFloat32(0);
+
+        const blocks = [];
+        for (let a = ADDR.arena, i = 0; a && i < 20000; i++) {
+            const head = u32(a);
+            if (head === null || head >>> 16 !== 0x7373) break;
+            blocks.push({ a, s: u32(a + 4), free: (head & 0xffff) === 1 });
+            const next = u32(a + 8);
+            if (!next || next <= a) break;
+            a = next;
+        }
+        if (!blocks.length) throw new Error(`No heap node at ${hex(ADDR.arena)}. Is this an NTSC 1.2 RAM dump?`);
+
+        const actors = [];
+        for (let c = 0; c < 12; c++) {
+            let p = u32(ADDR.actorLists + c * 8 + 4);
+            for (let n = 0; p && n < 300; n++) {
+                const id = u16(p);
+                if (id === null || !ACTORS[id]) break;
+                actors.push({ inst: p, id, name: ACTORS[id][0], cat: c, params: u16(p + 0x1c), rot: [s16(u16(p + 0x14)), s16(u16(p + 0x16)), s16(u16(p + 0x18))], pos: [f32(p + 0x24), f32(p + 0x28), f32(p + 0x2c)] });
+                p = u32(p + NEXT);
+            }
+        }
+        const ovl = {};
+        ACTORS.forEach((x, i) => {
+            if (!x) return;
+            const at = u32(ADDR.ovlTable + i * 0x20 + 0x10);
+            if (at) ovl[x[0]] = { at, n: (u8(ADDR.ovlTable + i * 0x20 + 0x1e) << 24) >> 24 };
+        });
+        const S = ADDR.save;
+        const save = {
+            child: u32(S + 4) === 1,
+            item: (slot) => u8(S + 0x74 + slot),
+            ammo: (slot) => (u8(S + 0x74 + 0x18 + slot) << 24) >> 24,
+            quest: (bit) => (u32(S + 0x74 + 0x30) >>> bit) & 1,
+            magic: ((u8(S + 0x32) << 24) >> 24) > 0,
+            fullHealth: u16(S + 0x2e) === u16(S + 0x30),
+        };
+        save.ocarina = save.item(7) === 0x07 || save.item(7) === 0x08;
+        const bottles = [0x12, 0x13, 0x14, 0x15].map(save.item);
+        const collect = [u32(ADDR.collect), u32(ADDR.tempCollect)];
+        const collected = (flag) => (flag < 0x20 ? (collect[0] >>> flag) & 1 : (collect[1] >>> (flag - 0x20)) & 1);
+
+        const byInst = new Map(actors.map((x) => [x.inst, x]));
+        const byOvl = new Map(Object.entries(ovl).map(([name, o]) => [o.at, name]));
+        const absolute = u32(ADDR.absoluteSpace) || null;
+        for (const b of blocks) {
+            const d = b.a + NODE;
+            if (b.free) { b.kind = "free"; continue; }
+            if (byInst.has(d)) { const x = byInst.get(d); b.kind = "actor"; b.label = `${x.name} ${hex(x.params, 4)}`; }
+            else if (byOvl.has(d)) { b.kind = "code"; b.label = `${byOvl.get(d)} code`; }
+            else if (d === absolute) { b.kind = "code"; b.label = "absolute code space"; }
+            else { b.kind = "other"; b.label = "other allocation"; }
+        }
+
+        // Item_DropCollectible with func_8001F404's age/inventory conversion
+        const convert = (d) => {
+            if (!save.child) { if (d === 0x10) d = 0x08; else if (d === 0x0d) d = 0x00; }
+            else if (d === 0x08 || d === 0x09 || d === 0x0a) d = 0x10;
+            if (([0x04, 0x0b, 0x19].includes(d) && save.item(2) === 0xff) || ([0x08, 0x09, 0x0a].includes(d) && save.item(3) === 0xff) || ([0x0e, 0x0f].includes(d) && !save.magic) || (d === 0x10 && save.item(6) === 0xff)) return -1;
+            if (d === 3 && save.fullHealth) return 0;
+            return d;
+        };
+        const drop = (d, flag) => {
+            if (d < 0 || d >= 0x1a) return { parts: [], text: "nothing" };
+            if (d === 0x12) return { parts: [["En_Elf"]], text: "a fairy" };
+            const c = convert(d);
+            if (c < 0) return { parts: [], text: `nothing (${ITEM00[d]} needs an item you don't have)` };
+            if (collected(flag)) return { parts: [], text: `nothing (${ITEM00[c]} already collected)` };
+            return { parts: [["En_Item00"]], text: ITEM00[c] };
+        };
+        // Things in the scene the player can make go away
+        const where = (x) => `(${x.pos.map((v) => Math.round(v)).join(", ")})`;
+        const scene = [];
+        for (const x of actors) {
+            const p = x.params, base = { x, where: where(x), id: `${x.name}@${hex(x.inst)}` };
+            if (x.name === "Obj_Tsubo") { const d = drop(p & 0x1f, (p >> 9) & 0x3f); scene.push({ ...base, verb: "Break the pot", parts: d.parts, text: d.text, kill: true }); }
+            else if (x.name === "Obj_Kibako") { const d = drop(p & 0x1f, (p >> 8) & 0x3f); scene.push({ ...base, verb: "Break the small crate", parts: d.parts, text: d.text, kill: true }); }
+            else if (x.name === "Obj_Kibako2") {
+                const d = drop(x.rot[0], x.rot[2] & 0x3f), sw = !(p & 0x8000);
+                scene.push({ ...base, verb: "Break the large crate", parts: [...(sw ? [["En_Sw"]] : []), ...d.parts], text: (sw ? "a Skulltula, then " : "") + d.text, kill: true });
+            } else if (x.name === "En_Kusa") {
+                const type = p & 3, bugs = p & 0x10 ? [["En_Insect"], ["En_Insect"], ["En_Insect"]] : [];
+                if (type === 1) {
+                    const sd = drop(0x10, 0), hd = drop(0x03, 0);
+                    if (sd.parts.length !== hd.parts.length) scene.push({ ...base, verb: "Cut the bush", skip: `random: ${sd.text} or ${hd.text}` });
+                    else scene.push({ ...base, verb: "Cut the bush", parts: [...sd.parts, ...bugs], text: (sd.parts.length ? `${sd.text} or ${hd.text}` : "nothing") + (bugs.length ? ", plus 3 bugs" : ""), kill: false });
+                } else scene.push({ ...base, verb: "Cut the bush", skip: "its drop is random" });
+            } else if (x.name === "En_Item00") scene.push({ ...base, verb: "Collect the item", parts: [], text: "", kill: true });
+            else if (x.cat === 5) scene.push({ ...base, verb: `Kill the ${x.name}`, parts: [], text: "", kill: true, note: "ignores its drop and death effects" });
+        }
+        return { blocks, actors, ovl, save, scene, absolute, bottles, format: off ? "Dolphin Wii VC MEM1" : "raw RDRAM", script: u32(ADDR.script) };
+    }
+
+    // A starting heap from just an address: one large free block from there up, nothing loaded.
+    function fromAddress(start) {
+        if (start % 16) throw new Error("The start address must be 16-byte aligned (it's where a heap block's data begins).");
+        const top = Math.min(0x80800000, start + 0x200000);
+        return { blocks: [{ a: start - NODE, s: top - start, free: true, kind: "free" }], actors: [], ovl: { En_Elf: { at: 0, n: 1 } }, scene: [], absolute: null, save: null, bottles: null, addressOnly: true };
+    }
+
+    // ---------------- allocator on the node chain ----------------
+    function malloc(B, size, label, kind) {
+        size = al16(size);
+        for (let i = 0; i < B.length; i++) {
+            const b = B[i];
+            if (!b.free || b.s < size) continue;
+            let s = b.s;
+            if (size + NODE < b.s) { B.splice(i + 1, 0, { a: b.a + NODE + size, s: b.s - size - NODE, free: true, kind: "free" }); s = size; }
+            B[i] = { a: b.a, s, free: false, label, kind };
+            return b.a + NODE;
+        }
+        return null;
+    }
+    function mallocR(B, size, label, kind) {
+        size = al16(size);
+        for (let i = B.length - 1; i >= 0; i--) {
+            const b = B[i];
+            if (!b.free || b.s < size) continue;
+            if (size + NODE < b.s) {
+                const nb = { a: b.a + b.s - size, s: size, free: false, label, kind };
+                B[i] = { ...b, s: b.s - size - NODE };
+                B.splice(i + 1, 0, nb);
+                return nb.a + NODE;
+            }
+            B[i] = { a: b.a, s: b.s, free: false, label, kind };
+            return b.a + NODE;
+        }
+        return null;
+    }
+    function release(B, ptr) {
+        const i = B.findIndex((b) => b.a === ptr - NODE);
+        if (i < 0 || B[i].free) return;
+        B[i] = { a: B[i].a, s: B[i].s, free: true, kind: "free" };
+        if (i + 1 < B.length && B[i + 1].free) { B[i] = { ...B[i], s: B[i].s + NODE + B[i + 1].s }; B.splice(i + 1, 1); }
+        if (i > 0 && B[i - 1].free) { B[i - 1] = { ...B[i - 1], s: B[i - 1].s + NODE + B[i].s }; B.splice(i, 1); }
+    }
+    function tag(B, ptr, step) {
+        const i = B.findIndex((b) => b.a === ptr - NODE);
+        if (i >= 0) B[i] = { ...B[i], step };
+    }
+
+    // ---------------- state ----------------
+    // st: { B blocks, ovl code refcounts, abs absolute space, live things that can go away, bottles, used scene ids }
+    const clone = (st) => ({ B: st.B.slice(), ovl: { ...st.ovl }, abs: st.abs, live: st.live.slice(), bottles: { ...st.bottles }, used: st.used, seq: st.seq });
+    // Actor_Spawn: code (if not loaded), instance, then Init allocations.
+    function spawnPart(st, name, extras, step) {
+        const A = actor(name), out = { name, ptrs: [] };
+        if (A.overlay && !st.ovl[name]) {
+            if (A.alloc === 1) {
+                if (!st.abs) {
+                    const p = mallocR(st.B, ABSOLUTE_SIZE, "absolute code space", "code");
+                    if (p === null) return null;
+                    st.abs = p; tag(st.B, p, step); out.code = p; out.codeWhat = "absolute code space";
+                }
+            } else {
+                const p = (A.alloc === 2 ? mallocR : malloc)(st.B, A.overlay, `${name} code`, "code");
+                if (p === null) return null;
+                st.ovl[name] = { at: p, n: 0 }; tag(st.B, p, step); out.code = p; out.codeWhat = `${name} code`;
+            }
+        }
+        const inst = malloc(st.B, A.instance, name, "actor");
+        if (inst === null) return null;
+        tag(st.B, inst, step);
+        out.inst = inst; out.ptrs.push(inst);
+        if (st.ovl[name]) st.ovl[name] = { ...st.ovl[name], n: st.ovl[name].n + 1 };
+        for (const e of extras || []) {
+            const p = malloc(st.B, e, `${name} table`, "other");
+            if (p === null) return null;
+            tag(st.B, p, step); out.ptrs.push(p);
+        }
+        return out;
+    }
+    // Actor_Delete: instance and its tables freed; a normal overlay is freed with its last instance.
+    function deletePart(st, name, ptrs) {
+        for (const p of ptrs) release(st.B, p);
+        const o = st.ovl[name];
+        if (!o) return null;
+        const n = o.n - 1;
+        if (n <= 0 && actor(name).alloc === 0 && o.at) { release(st.B, o.at); const c = { ...st.ovl }; delete c[name]; st.ovl = c; return o.at; }
+        st.ovl = { ...st.ovl, [name]: { ...o, n } };
+        return null;
+    }
+    // Spawn a thing's parts and register what can later go away.
+    function spawnThing(st, def, step) {
+        const made = [];
+        for (const [name, ex] of def.parts) {
+            const r = spawnPart(st, name, ex, step);
+            if (!r) return null;
+            made.push(r);
+        }
+        const unit = (ms) => ({ id: ++st.seq, step, key: def.key, label: def.label, gone: def.gone, alt: def.alt, then: def.then, explosive: !!def.explosive, held: !!def.held, refill: def.refill ? def.bottle : null, parts: ms.map((m) => [m.name, m.ptrs]) });
+        if (made.length) {
+            if (def.together || made.length === 1) st.live.push(unit(made));
+            else for (const m of made) st.live.push(unit([m]));
+        }
+        return made;
+    }
+    // Things with the same footprint and the same way of going away are interchangeable.
+    const liveKey = (st) => st.live.map((l) => `${l.gone}${l.alt ? "+" : ""}${l.held ? "h" : ""}${l.explosive ? "x" : ""}${l.refill || ""}:${l.parts.map((p) => p[1].join("+")).join("/")}`).sort().join(",");
+    const key = (st) => st.B.filter((b) => b.free).map((b) => b.a.toString(36) + "." + b.s.toString(36)).join(",") + "|" + Object.keys(st.ovl).sort().join(",") + "|" + (st.abs || "") + "|" + liveKey(st) + "|" + JSON.stringify(st.bottles) + "|" + [...st.used].sort().join(",");
+    const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+    // ---------------- search ----------------
+    // Lists every distinct way it finds to make free memory start exactly at X, fewest steps first.
+    function solve(dump, opts) {
+        const X = opts.address;
+        if (X % 16) return { options: [], reason: `Allocations start on 16-byte boundaries, so ${hex(X)} can never be one. Try ${hex(X - (X % 16))} or ${hex(X - (X % 16) + 16)}.` };
+        const acts = ACTIONS.filter((a) => opts.on[a.key]);
+        const scene = (dump.scene || []).filter((s) => !s.skip && (!opts.useScene || opts.useScene(s)));
+        const sizeOf = (parts) => parts.reduce((t, [n, ex = []]) => { const A = actor(n); return t + al16(A.instance) + NODE + ex.reduce((u, e) => u + al16(e) + NODE, 0) + (A.alloc === 0 ? al16(A.overlay) + NODE : 0); }, 0);
+        const maxBytes = Math.max(1, ...acts.map((a) => sizeOf(a.parts)), ...scene.map((s) => sizeOf(s.parts)), sizeOf([["En_Bom"]]), sizeOf([["En_M_Fire1"]]));
+        const need = (st) => {
+            for (const b of st.B) if (b.free && b.a <= X - NODE && X + 16 <= b.a + NODE + b.s) return X - NODE - b.a;
+            return -1;
+        };
+        const coverable = (st) => st.live.length > 0 || scene.some((s) => s.kill && !st.used.has(s.id));
+        // bottles: count of each content, plus empty ones
+        const bottles = { empty: 0 };
+        if (dump.bottles) for (const b of dump.bottles) { if (b === 0x14) bottles.empty++; else if (b !== 0xff) bottles[b] = (bottles[b] || 0) + 1; }
+        if (dump.addressOnly) for (const a of ACTIONS) if (a.bottle && opts.on[a.key]) bottles[a.bottle] = 1;
+        const start = { B: dump.blocks.map((b) => ({ ...b })), ovl: { ...dump.ovl }, abs: dump.absolute, live: [], bottles, used: new Set(), seq: 0 };
+        if (need(start) < 0 && !coverable(start)) return { options: [], reason: `${hex(X)} isn't in free memory, and nothing allowed here can free it.` };
+
+        const heap = [];
+        const push = (x) => { heap.push(x); let i = heap.length - 1; while (i) { const p = (i - 1) >> 1; if (heap[p].f <= x.f) break; heap[i] = heap[p]; heap[i = p] = x; } };
+        const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && heap[l].f < (m === i ? last.f : heap[m].f)) m = l; if (r < heap.length && heap[r].f < (m === i ? last.f : heap[m].f)) m = r; if (m === i) break; heap[i] = heap[m]; i = m; } heap[i] = last; } return top; };
+        const hOf = (st) => { const n = need(st); return n < 0 ? 1 : Math.ceil(n / maxBytes); };
+        push({ st: start, g: 0, f: hOf(start), steps: [] });
+        const seen = new Map([[key(start), 0]]);
+        const options = [], bySig = new Map();
+        let nodes = 0, stopped = null;
+        const t0 = Date.now(), maxSteps = opts.maxSteps || 8, maxOptions = opts.maxOptions || 20;
+        const result = (st, steps) => {
+            const blk = st.B.find((b) => b.free && b.a + NODE === X);
+            const below = st.B.filter((b) => b.free && b.a + NODE < X).reduce((m, b) => Math.max(m, b.s), 0);
+            return { steps, size: blk ? blk.s : 0, below, blocks: st.B };
+        };
+        while (heap.length) {
+            if (options.length >= maxOptions) { stopped = "limit"; break; }
+            if (++nodes > (opts.maxNodes || 250000)) { stopped = "budget"; break; }
+            if ((nodes & 255) === 0 && Date.now() - t0 > (opts.maxMs || 20000)) { stopped = "time"; break; }
+            const cur = pop();
+            if (need(cur.st) === 0) {
+                // useful only if some size skips every gap below X and still fits at X;
+                // otherwise keep going (later steps may fill the bigger gap below)
+                const r0 = result(cur.st, cur.steps);
+                if (r0.below < r0.size) {
+                    // the same things in a different order count as one option
+                    const sig = cur.steps.map((x) => x.label.replace(/ \(from step \d+\)$/, "")).sort().join("|");
+                    const same = bySig.get(sig);
+                    if (same) same.orders++;
+                    else { const o = { ...r0, orders: 1 }; bySig.set(sig, o); options.push(o); }
+                    continue;
+                }
+            }
+            if (cur.g >= maxSteps) continue;
+            const g = cur.g + 1;
+            const children = new Map();
+            const add = (st, step) => {
+                if (need(st) < 0 && !coverable(st)) return;
+                const k = key(st);
+                if (children.has(k)) { const c = children.get(k); if (c.step.label !== step.label && !c.step.alts.includes(step.label)) c.step.alts.push(step.label); return; }
+                if (seen.has(k) && seen.get(k) <= g) return;
+                seen.set(k, g);
+                step.alts = [];
+                children.set(k, { st, step });
+            };
+            const live = cur.st.live;
+            const explosives = live.filter((l) => l.explosive).length;
+            const holding = live.some((l) => l.held);
+            // 1. make something
+            for (const a of acts) {
+                if (a.explosive && explosives >= 3) continue; // z_player.c: no new explosive while 3 are live
+                if (a.held && holding) continue; // one drawn/held item at a time
+                if (a.bottle && !(cur.st.bottles[a.bottle] > 0)) continue;
+                const st = clone(cur.st);
+                const made = spawnThing(st, a, g);
+                if (!made) continue;
+                if (a.bottle) st.bottles = { ...st.bottles, [a.bottle]: st.bottles[a.bottle] - 1, empty: (st.bottles.empty || 0) + 1 };
+                add(st, { label: a.label, group: a.group, made, freed: [] });
+            }
+            // 2. something made earlier goes away
+            for (const l of live) {
+                const variants = [{ gone: l.gone, then: l.then }];
+                if (l.alt) variants.push(l.alt);
+                for (const v of variants) {
+                    const st = clone(cur.st);
+                    st.live = st.live.filter((x) => x.id !== l.id);
+                    let made = [];
+                    if (v.then) { made = spawnThing(st, v.then, g); if (!made) continue; }
+                    const freed = [];
+                    for (const [name, ptrs] of l.parts) { freed.push([name, ptrs[0]]); const c = deletePart(st, name, ptrs); if (c) freed.push([`${name} code`, c]); }
+                    if (l.refill && (st.bottles.empty || 0) > 0) st.bottles = { ...st.bottles, [l.refill]: (st.bottles[l.refill] || 0) + 1, empty: st.bottles.empty - 1 };
+                    add(st, { label: `${cap(v.gone)} (from step ${l.step})`, made, freed, removal: true });
+                }
+            }
+            // 3. break, kill or collect something already in the scene
+            for (const s of scene) {
+                if (cur.st.used.has(s.id)) continue;
+                const st = clone(cur.st);
+                st.used = new Set(st.used); st.used.add(s.id);
+                let made = [];
+                if (s.parts.length) { made = spawnThing(st, { key: "drop", label: s.parts[0][0] === "En_Sw" ? "Skulltula and drop" : "Drop", parts: s.parts, gone: "the drop goes (collect it, or it despawns)" }, g); if (!made) continue; }
+                const freed = [];
+                if (s.kill) {
+                    freed.push([s.x.name, s.x.inst]);
+                    const c = deletePart(st, s.x.name, [s.x.inst]);
+                    if (c) freed.push([`${s.x.name} code (last one)`, c]);
+                }
+                add(st, { label: `${s.verb} at ${s.where}`, made, freed, drop: s.text, note: s.note });
+            }
+            for (const { st, step } of children.values()) push({ st, g, f: g + hOf(st), steps: [...cur.steps, step] });
+        }
+        // simplest first: fewer steps, then everyday items over bottles, magic and songs, then the widest landing range
+        const W = { Explosives: 0, Shooting: 0, Tools: 0.1, Bottles: 0.2, Magic: 0.3, Songs: 0.3 };
+        const weight = (o) => o.steps.reduce((t, x) => t + (x.removal ? 0.05 : x.group ? W[x.group] || 0 : 0.1), 0);
+        options.sort((a, b) => a.steps.length - b.steps.length || weight(a) - weight(b) || a.below - b.below);
+        return { options, nodes, stopped, ms: Date.now() - t0 };
+    }
+
+    return { fromDump, fromAddress, solve, ACTIONS, actor, hex, ID, NODE, al16, ADDR, cap };
+})();
+if (typeof module !== "undefined") module.exports = Fill;
+
+</script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const hex = Fill.hex, NODE = Fill.NODE;
+let dump = null;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+(function theme() {
+  try { const t = localStorage.getItem("hts:theme"); if (t) document.documentElement.dataset.theme = t; } catch (_) {}
+  $("theme").onclick = () => {
+    const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const next = cur === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("hts:theme", next); } catch (_) {}
+  };
+})();
+
+
+// ---------- heap view ----------
+const COLOR = { free: "var(--free)", actor: "var(--actor)", code: "var(--code)", other: "var(--other)" };
+function heapView(blocks, target) {
+  const lo = blocks[0].a, last = blocks[blocks.length - 1], hi = last.a + NODE + last.s, span = hi - lo;
+  const pct = (a) => ((a - lo) / span) * 100;
+  const colorOf = (b) => (b.step ? "var(--new)" : COLOR[b.kind] || COLOR.other);
+  const strip = blocks.filter((b) => !b.free).map((b) => `<div title="${esc(`${hex(b.a + NODE)} ${b.label || ""} (0x${hex(b.s, 1)})`)}" style="left:${pct(b.a)}%;width:${((b.s + NODE) / span) * 100}%;background:${colorOf(b)}"></div>`).join("") +
+    (target ? `<div class="mark" style="left:${pct(target)}%"></div>` : "");
+  const rows = blocks.map((b) => {
+    const d = b.a + NODE, tgt = target === d;
+    const what = b.free ? "free" : esc(b.label || "allocation");
+    return `<tr class="${b.free ? "free" : ""} ${b.step ? "new" : ""} ${tgt ? "tgt" : ""}" ${tgt ? 'data-tgt="1"' : ""}><td><span class="dot" style="background:${colorOf(b)}"></span>${hex(d)}</td><td>0x${hex(b.s, 1)}</td><td class="c">${what}${b.step ? `<span class="tag">step ${b.step}</span>` : ""}${tgt ? ` ← next allocation lands here` : ""}</td></tr>`;
+  }).join("");
+  return `<div class="legend"><span><i style="background:var(--actor)"></i>actor</span><span><i style="background:var(--code)"></i>actor code</span><span><i style="background:var(--other)"></i>other</span><span><i style="background:var(--free);outline:1px solid var(--line)"></i>free</span>${blocks.some((b) => b.step) ? `<span><i style="background:var(--new)"></i>added by the steps</span>` : ""}${target ? `<span><i style="background:var(--target)"></i>target</span>` : ""}</div>
+    <div class="strip">${strip}</div><div class="axis"><span>${hex(lo + NODE)}</span><span>${hex(hi)}</span></div>
+    <div class="blocks"><table><tr><th>Starts at</th><th>Size</th><th>Contents</th></tr>${rows}</table></div>`;
+}
+function scrollToTarget(box) {
+  const row = box.querySelector("[data-tgt]"), wrap = box.querySelector(".blocks");
+  if (row && wrap) wrap.scrollTop = row.offsetTop - wrap.clientHeight / 2;
+}
+
+// ---------- items ----------
+let mode = "dump";
+function usable(a) {
+  if (mode === "addr") { const age = document.querySelector('input[name=age]:checked').value; return a.age === "both" || a.age === age ? "" : `${a.age} only`; }
+  if (!dump) return "";
+  const s = dump.save;
+  if (a.age !== "both" && (a.age === "child") !== s.child) return `${a.age} only`;
+  if (a.bottle) return dump.bottles.includes(a.bottle) ? "" : "no bottle with it";
+  return a.need(s) ? "" : "not in your inventory";
+}
+function renderItems() {
+  const box = $("items");
+  const groups = [...new Set(Fill.ACTIONS.map((a) => a.group))];
+  box.innerHTML = groups.map((g) => `<div class="igroup"><b>${g}</b><div class="fillers">${Fill.ACTIONS.filter((a) => a.group === g).map((a) => {
+    const why = usable(a);
+    return `<label class="filler${why ? " off" : ""}"><input type="checkbox" id="on_${a.key}" ${why ? "disabled" : "checked"}><span>${esc(a.label)}<small>${esc(why || a.note || "")}</small></span></label>`;
+  }).join("")}</div></div>`).join("");
+}
+renderItems();
+
+for (const r of document.querySelectorAll("input[name=mode]")) r.onchange = () => {
+  mode = r.value;
+  $("dumpMode").hidden = mode !== "dump"; $("addrMode").hidden = mode !== "addr";
+  $("out").innerHTML = "";
+  renderItems(); ready();
+};
+for (const r of document.querySelectorAll("input[name=age]")) r.onchange = renderItems;
+$("startAddr").oninput = ready;
+function ready() { $("go").disabled = mode === "dump" ? !dump : !/^(0x)?[0-9a-f]{1,8}$/i.test($("startAddr").value.trim()); }
+
+// ---------- dump ----------
+$("dump").onchange = async () => {
+  const file = $("dump").files[0];
+  const st = $("dumpStatus");
+  st.className = "status"; dump = null; $("now").hidden = true; $("out").innerHTML = ""; ready();
+  if (!file) return;
+  try {
+    dump = Fill.fromDump(new Uint8Array(await file.arrayBuffer()));
+    dump.raw = new Uint8Array(await file.arrayBuffer());
+    st.textContent = `${dump.format}: ${dump.blocks.length} heap blocks, ${dump.actors.length} actors, ${dump.blocks.filter((b) => b.free).length} free gaps. ${dump.save.child ? "Child" : "Adult"} Link.` + (dump.script ? ` Cutscene pointer ${hex(dump.script)}.` : "");
+    $("heapNow").innerHTML = heapView(dump.blocks, null);
+    $("scene").innerHTML = dump.scene.length ? dump.scene.map((s) => s.skip
+      ? `<div class="brk skip"><input type="checkbox" disabled><span>${esc(s.verb)} at ${s.where}<small>Not used: ${esc(s.skip)}</small></span></div>`
+      : `<label class="brk"><input type="checkbox" checked data-id="${esc(s.id)}"><span>${esc(s.verb)} at ${s.where}<small>${[s.text ? `Drops ${esc(s.text)}` : "", s.kill ? `frees its block at ${hex(s.x.inst)}` : "the stump stays", s.note || ""].filter(Boolean).join("; ")}</small></span></label>`).join("")
+      : `<p class="muted">Nothing in the loaded rooms that Link can break, kill or collect.</p>`;
+    $("now").hidden = false;
+    renderItems(); ready();
+  } catch (err) { st.className = "status err"; st.textContent = err.message; }
+};
+
+const hexIn = (id, name) => {
+  const v = $(id).value.trim().replace(/^0x/i, "");
+  if (!/^[0-9a-f]{1,8}$/i.test(v)) throw new Error(`${name} must be hex.`);
+  return parseInt(v, 16) >>> 0;
+};
+const line = (m) => {
+  const parts = [`${m.name} at <span class="addr">${hex(m.inst)}</span>`];
+  if (m.code) parts.push(`${esc(m.codeWhat)} at <span class="addr">${hex(m.code)}</span>`);
+  if (m.ptrs && m.ptrs.length > 1) parts.push(`plus ${m.ptrs.slice(1).map((e) => `<span class="addr">${hex(e)}</span>`).join(", ")}`);
+  return parts.join(", ");
+};
+function stepsHTML(steps) {
+  return `<ol>${steps.map((s) => {
+    const bits = [];
+    if (s.made.length) bits.push(s.made.length > 4 ? `${s.made.length} actors from <span class="addr">${hex(s.made[0].inst)}</span>` : s.made.map(line).join("; "));
+    else if (s.drop) bits.push(`drops ${esc(s.drop)}`);
+    for (const [what, at] of s.freed) bits.push(`${esc(what)} at <span class="addr">${hex(at)}</span> freed`);
+    const alts = s.alts && s.alts.length ? ` <span class="alts">(or ${s.alts.map(esc).join(" / ")})</span>` : "";
+    return `<li><b>${esc(s.label)}</b>${alts} <span class="muted">→ ${bits.join(". ") || "nothing changes"}${s.note ? ` (${esc(s.note)})` : ""}</span></li>`;
+  }).join("")}</ol>`;
+}
+
+// ---------- solve in a worker ----------
+const workerURL = URL.createObjectURL(new Blob([$("engineSrc").textContent, `
+self.onmessage = (e) => {
+  const { mode, raw, start, address, on, scene } = e.data;
+  try {
+    const d = mode === "dump" ? Fill.fromDump(raw) : Fill.fromAddress(start);
+    const ids = new Set(scene);
+    self.postMessage({ type: "done", r: Fill.solve(d, { address, on, useScene: (s) => ids.has(s.id) }) });
+  } catch (err) { self.postMessage({ type: "error", message: err.message }); }
+};`], { type: "text/javascript" }));
+let worker = null;
+
+$("go").onclick = () => {
+  const out = $("out");
+  try {
+    const address = hexIn("addr", "The target address");
+    const start = mode === "addr" ? hexIn("startAddr", "The start address") : null;
+    if (mode === "addr" && address < start) throw new Error("The target has to be at or above where free memory starts.");
+    const on = {};
+    for (const a of Fill.ACTIONS) on[a.key] = !!($("on_" + a.key) && $("on_" + a.key).checked);
+    const scene = mode === "dump" ? [...document.querySelectorAll("#scene input[data-id]:checked")].map((c) => c.dataset.id) : [];
+    if (worker) worker.terminate();
+    worker = new Worker(workerURL);
+    $("go").disabled = true; $("progress").textContent = "Searching…"; out.innerHTML = "";
+    worker.onmessage = (e) => {
+      worker.terminate(); worker = null; $("go").disabled = false; $("progress").textContent = "";
+      if (e.data.type === "error") { out.innerHTML = `<p class="verdict bad">${esc(e.data.message)}</p>`; return; }
+      show(e.data.r, address);
+    };
+    worker.postMessage({ mode, raw: mode === "dump" ? dump.raw : null, start, address, on, scene });
+  } catch (err) { out.innerHTML = `<p class="verdict bad">${esc(err.message)}</p>`; }
+};
+function show(r, address) {
+  const out = $("out"), where = `<span class="addr">${hex(address)}</span>`;
+  if (!r.options.length) {
+    out.innerHTML = `<p class="verdict bad">No way found to fill exactly up to ${where}.</p><p class="muted">${esc(r.reason || (r.stopped ? "The search hit its limit (8 steps or the time budget)." : "Every combination up to 8 steps was tried."))}</p>`;
+    return;
+  }
+  const more = r.stopped === "limit" ? ` Showing the first ${r.options.length}; there are more.` : r.stopped ? " The search hit its time or size limit, so there may be more." : "";
+  out.innerHTML = `<p class="verdict ok">${r.options.length} option${r.options.length > 1 ? "s" : ""}, simplest first.</p><p class="muted">${more.trim()}</p>` +
+    r.options.map((o, i) => {
+      const upTo = o.size >= 0x100000 ? "" : ` (up to 0x${hex(o.size, 1)})`;
+      const range = o.below ? `bigger than 0x${hex(o.below, 1)} bytes${upTo}` : o.size >= 0x100000 ? "of any size" : `up to 0x${hex(o.size, 1)} bytes`;
+      return `<div class="opt"><h3>Option ${i + 1} · ${o.steps.length ? `${o.steps.length} step${o.steps.length > 1 ? "s" : ""}` : "nothing to do"}</h3>
+        ${o.steps.length ? stepsHTML(o.steps) : ""}
+        <p class="muted">Then the next allocation ${range} lands at ${where}.${o.orders > 1 ? ` These steps also work in ${o.orders - 1} other order${o.orders > 2 ? "s" : ""}.` : ""}</p>
+        <details data-i="${i}"><summary>Heap after</summary></details></div>`;
+    }).join("") +
+    `<p class="muted">Timing is ignored: things that go away on their own (bombs, nuts, the boomerang) are assumed to stay until a step says they go.</p>`;
+  for (const d of out.querySelectorAll("details[data-i]")) d.addEventListener("toggle", () => {
+    if (!d.open || d.dataset.done) return;
+    d.dataset.done = 1;
+    d.insertAdjacentHTML("beforeend", heapView(r.options[Number(d.dataset.i)].blocks, address));
+    scrollToTarget(d);
+  });
+}
+</script>
+</body>
+</html>
