@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Heap Target Solver</title>
-<meta name="description" content="OoT NTSC 1.2: every way to fill the heap up to an address, simplest first.">
+<meta name="description" content="OoT NTSC 1.2: every way to make something land at a heap address, simplest first.">
 <style>
 :root { --bg:#fbfaf7; --ink:#1c1d1f; --muted:#6b6f75; --line:#e2dfd7; --field:#ffffff; --accent:#2f6f5e; --accent-ink:#fff; --ok:#2f7d4a; --bad:#b2402f;
   --free:#e9e6de; --actor:#5b8db8; --code:#8a6fb0; --other:#a3a39b; --new:#e08a2e; --target:#c0392b;
@@ -53,6 +53,7 @@ legend.l { font-size: 13px; color: var(--muted); margin-bottom: 6px; padding: 0;
 button { font: 600 15px var(--sans); background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 6px; padding: 9px 20px; margin-top: 22px; cursor: pointer; }
 button:disabled { opacity: .45; cursor: default; }
 #out { margin-top: 28px; }
+button.more { margin: 0 8px 0 0; padding: 6px 14px; font-size: 14px; }
 .verdict { font-weight: 600; font-size: 16px; margin: 0 0 10px; }
 .verdict.ok { color: var(--ok); } .verdict.bad { color: var(--bad); }
 ol { padding-left: 22px; margin: 8px 0; } li { margin: 7px 0; }
@@ -86,6 +87,7 @@ ol { padding-left: 22px; margin: 8px 0; } li { margin: 7px 0; }
 .choice:has(input:checked) { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
 .choice small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
 .choice input { margin-top: 4px; }
+select { font: 15px var(--sans); color: var(--ink); background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; width: 100%; max-width: 520px; }
 [hidden] { display: none !important; }
 </style>
 </head>
@@ -93,7 +95,7 @@ ol { padding-left: 22px; margin: 8px 0; } li { margin: 7px 0; }
 <button class="theme" id="theme" type="button">Theme</button>
 <main>
   <h1>Heap target solver</h1>
-  <p class="sub">Finds every way it can to fill Ocarina of Time's actor heap up to an address you choose, simplest first. NTSC 1.2 only.</p>
+  <p class="sub">Finds every way it can to fill Ocarina of Time's actor heap so that what you choose lands at the address you choose, simplest first. NTSC 1.2 only.</p>
 
 
   <section class="step">
@@ -124,7 +126,12 @@ ol { padding-left: 22px; margin: 8px 0; } li { margin: 7px 0; }
 
   <section class="step">
     <h2><span class="n">2</span>End point</h2>
-    <div class="one" style="margin-top:0"><label class="l" for="addr">Fill the heap up to</label><input id="addr" placeholder="801F8550" autocomplete="off"></div>
+    <div class="pair">
+      <div><label class="l" for="addr">Fill the heap up to</label><input id="addr" placeholder="801F8550" autocomplete="off"></div>
+      <div><label class="l" for="land">What will land there</label><select id="land"></select></div>
+    </div>
+    <div class="one" id="landOther" hidden><label class="l" for="landActor">Actor name</label><input id="landActor" list="actorNames" placeholder="En_Item00" autocomplete="off"><datalist id="actorNames"></datalist></div>
+    <div class="status" id="landNote">It counts if the thing itself, its code or one of its tables starts at the address.</div>
   </section>
 
   <section class="step">
@@ -145,7 +152,7 @@ ol { padding-left: 22px; margin: 8px 0; } li { margin: 7px 0; }
         <li>Spawning an actor: its code first if not loaded, then the actor, then what its Init allocates (arrow tables, Farore's Wind table, 3 bugs, 19 blue flames).</li>
         <li>Removing an actor frees it and its tables; normal code is freed with its last actor.</li>
         <li>Pot, crate and bush drops as <code>Item_DropCollectible</code> decides them for Link's age, items, health and collected flags.</li>
-        <li>At most 3 bombs, bombchus and explosions out at once; one drawn or held item at a time.</li>
+        <li>At most 3 bombs, bombchus and explosions out at once; one drawn or held item at a time. The thing that lands counts too.</li>
       </ul></div>
       <div><b>Not modeled</b><ul>
         <li>Timing. Things that go away on their own (bombs, nuts, the boomerang, drops) stay until a step says they go.</li>
@@ -328,6 +335,7 @@ const Fill = (function () {
         return { blocks, actors, ovl, save, scene, absolute, bottles, format: off ? "Dolphin Wii VC MEM1" : "raw RDRAM", script: u32(ADDR.script) };
     }
 
+
     // A starting heap from just an address: one large free block from there up, nothing loaded.
     function fromAddress(start) {
         if (start % 16) throw new Error("The start address must be 16-byte aligned (it's where a heap block's data begins).");
@@ -438,12 +446,50 @@ const Fill = (function () {
     const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
     // ---------------- search ----------------
-    // Lists every distinct way it finds to make free memory start exactly at X, fewest steps first.
+    // What will land at the address: one of Link's actions ({ key }) or any actor by name ({ actor }).
+    function landDef(land) {
+        if (!land) throw new Error("Choose what will land there.");
+        if (land.key) {
+            const a = ACTIONS.find((x) => x.key === land.key);
+            if (!a) throw new Error(`Unknown item ${land.key}.`);
+            return a;
+        }
+        const A = actor(String(land.actor || "").trim());
+        return { key: "land", label: A.name, parts: [[A.name]], gone: `the ${A.name} goes`, byName: true };
+    }
+    // Spawn the lander on a copy of st; returns where its parts went and which one starts at X, or null.
+    function tryLand(st, L, X, step) {
+        const live = st.live;
+        if (!L.byName) {
+            if (L.explosive && live.filter((l) => l.explosive).length >= 3) return null;
+            if (L.held && live.some((l) => l.held)) return null;
+            if (L.bottle && !(st.bottles[L.bottle] > 0)) return null;
+        }
+        const s2 = clone(st);
+        const made = spawnThing(s2, L, step);
+        if (!made) return null;
+        for (const m of made) {
+            if (m.inst === X) return { st: s2, made, what: m.name };
+            if (m.code === X) return { st: s2, made, what: m.codeWhat };
+            if (m.ptrs.slice(1).includes(X)) return { st: s2, made, what: `${m.name} table` };
+        }
+        return null;
+    }
+    // Lists every distinct way it finds to make the chosen thing land exactly at X, fewest steps first.
     function solve(dump, opts) {
         const X = opts.address;
         if (X % 16) return { options: [], reason: `Allocations start on 16-byte boundaries, so ${hex(X)} can never be one. Try ${hex(X - (X % 16))} or ${hex(X - (X % 16) + 16)}.` };
+        const L = landDef(opts.land);
         const acts = ACTIONS.filter((a) => opts.on[a.key]);
         const scene = (dump.scene || []).filter((s) => !s.skip && (!opts.useScene || opts.useScene(s)));
+        // Things in the scene that change the heap the same way (bushes with the same drop that stay put) are
+        // interchangeable: the search uses the first one left and lists the others as alternatives.
+        const groups = [], gi = new Map();
+        for (const s of scene) {
+            const sig = s.kill ? s.id : `${s.verb}|${JSON.stringify(s.parts)}|${s.text}`;
+            if (!gi.has(sig)) { gi.set(sig, groups.length); groups.push([]); }
+            groups[gi.get(sig)].push(s);
+        }
         const sizeOf = (parts) => parts.reduce((t, [n, ex = []]) => { const A = actor(n); return t + al16(A.instance) + NODE + ex.reduce((u, e) => u + al16(e) + NODE, 0) + (A.alloc === 0 ? al16(A.overlay) + NODE : 0); }, 0);
         const maxBytes = Math.max(1, ...acts.map((a) => sizeOf(a.parts)), ...scene.map((s) => sizeOf(s.parts)), sizeOf([["En_Bom"]]), sizeOf([["En_M_Fire1"]]));
         const need = (st) => {
@@ -461,99 +507,161 @@ const Fill = (function () {
         const heap = [];
         const push = (x) => { heap.push(x); let i = heap.length - 1; while (i) { const p = (i - 1) >> 1; if (heap[p].f <= x.f) break; heap[i] = heap[p]; heap[i = p] = x; } };
         const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && heap[l].f < (m === i ? last.f : heap[m].f)) m = l; if (r < heap.length && heap[r].f < (m === i ? last.f : heap[m].f)) m = r; if (m === i) break; heap[i] = heap[m]; i = m; } heap[i] = last; } return top; };
-        const hOf = (st) => { const n = need(st); return n < 0 ? 1 : Math.ceil(n / maxBytes); };
-        push({ st: start, g: 0, f: hOf(start), steps: [] });
-        const seen = new Map([[key(start), 0]]);
+        const landBytes = sizeOf(L.parts);
+        const hOf = (st) => { const n = need(st); return n < 0 ? 1 : Math.ceil(Math.max(0, n - landBytes) / maxBytes); };
+        // One move from a state: make something, something made earlier goes away, or use a scene group.
+        // Deterministic, so a queued state is kept as (parent, move) and rebuilt from the start when popped.
+        const moves = (st) => {
+            const out = [], live = st.live;
+            const explosives = live.filter((l) => l.explosive).length;
+            const holding = live.some((l) => l.held);
+            for (const a of acts) {
+                if (a.explosive && explosives >= 3) continue; // z_player.c: no new explosive while 3 are live
+                if (a.held && holding) continue; // one drawn/held item at a time
+                if (a.bottle && !(st.bottles[a.bottle] > 0)) continue;
+                out.push({ t: 0, a });
+            }
+            for (const l of live) { out.push({ t: 1, id: l.id, alt: false }); if (l.alt) out.push({ t: 1, id: l.id, alt: true }); }
+            groups.forEach((grp, gi) => { if (grp.some((x) => !st.used.has(x.id))) out.push({ t: 2, gi }); });
+            return out;
+        };
+        const apply = (st0, mv, g) => {
+            const st = clone(st0);
+            if (mv.t === 0) {
+                const a = mv.a;
+                const made = spawnThing(st, a, g);
+                if (!made) return null;
+                if (a.bottle) st.bottles = { ...st.bottles, [a.bottle]: st.bottles[a.bottle] - 1, empty: (st.bottles.empty || 0) + 1 };
+                return { st, step: { label: a.label, group: a.group, made, freed: [] } };
+            }
+            if (mv.t === 1) {
+                const l = st0.live.find((x) => x.id === mv.id);
+                const v = mv.alt ? l.alt : { gone: l.gone, then: l.then };
+                st.live = st.live.filter((x) => x.id !== l.id);
+                let made = [];
+                if (v.then) { made = spawnThing(st, v.then, g); if (!made) return null; }
+                const freed = [];
+                for (const [name, ptrs] of l.parts) { freed.push([name, ptrs[0]]); const c = deletePart(st, name, ptrs); if (c) freed.push([`${name} code`, c]); }
+                if (l.refill && (st.bottles.empty || 0) > 0) st.bottles = { ...st.bottles, [l.refill]: (st.bottles[l.refill] || 0) + 1, empty: st.bottles.empty - 1 };
+                return { st, step: { label: `${cap(v.gone)} (from step ${l.step})`, made, freed, removal: true } };
+            }
+            const left = groups[mv.gi].filter((x) => !st0.used.has(x.id));
+            const s = left[0];
+            st.used = new Set(st.used); st.used.add(s.id);
+            let made = [];
+            if (s.parts.length) { made = spawnThing(st, { key: "drop", label: s.parts[0][0] === "En_Sw" ? "Skulltula and drop" : "Drop", parts: s.parts, gone: "the drop goes (collect it, or it despawns)" }, g); if (!made) return null; }
+            const freed = [];
+            if (s.kill) {
+                freed.push([s.x.name, s.x.inst]);
+                const c = deletePart(st, s.x.name, [s.x.inst]);
+                if (c) freed.push([`${s.x.name} code (last one)`, c]);
+            }
+            return { st, step: { label: `${s.verb} at ${s.where}`, made, freed, drop: s.text, note: s.note, others: left.slice(1).map((x) => x.verb === s.verb ? `at ${x.where}` : `${x.verb} at ${x.where}`) } };
+        };
+        const rebuild = (node) => {
+            const path = [];
+            for (let n = node; n.parent; n = n.parent) path.push(n);
+            let st = start;
+            const steps = [];
+            for (let i = path.length - 1; i >= 0; i--) {
+                const n = path[i], r = apply(st, n.mv, n.g);
+                st = r.st;
+                r.step.alts = [...(r.step.others || []), ...(n.alts || [])];
+                steps.push(r.step);
+            }
+            return { st, steps };
+        };
+        // seen states are kept as a 53-bit hash of their key
+        const hash = (str) => {
+            let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+            for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); }
+            h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+            h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+            return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+        };
+        // The same state key as key(), hashed from its numbers directly (much faster than hashing the string).
+        const sh = new Map();
+        const strH = (x) => { let v = sh.get(x); if (v === undefined) { v = hash(String(x)) | 0; sh.set(x, v); } return v; };
+        // int32 mixing only (keeps the hot path in small integers)
+        const mix = (h, v) => { h = Math.imul(h ^ v, 0x27d4eb2d); return h ^ (h >>> 15); };
+        // The same state as key(), packed into a short string of 16-bit units (the Map hashes it natively).
+        const ids = new Map();
+        const idOf = (x) => { let v = ids.get(x); if (v === undefined) { v = ids.size + 1; ids.set(x, v); } return v; };
+        const fastKey = (st) => {
+            const c = [];
+            const n32 = (v) => { c.push(v >>> 16, v & 0xffff); };
+            for (const blk of st.B) if (blk.free) { n32(blk.a); n32(blk.s); }
+            c.push(0xfff0); c.push(...Object.keys(st.ovl).map(idOf).sort((p, q) => p - q));
+            c.push(0xfff1); n32(st.abs || 0);
+            const ls = st.live.map((l) => {
+                let x = String.fromCharCode(idOf(l.gone), (l.alt ? 1 : 0) | (l.held ? 2 : 0) | (l.explosive ? 4 : 0) | ((l.refill || 0) << 3));
+                for (const p of l.parts) { x += "|"; for (const q of p[1]) x += String.fromCharCode(q >>> 16, q & 0xffff); }
+                return x;
+            }).sort();
+            c.push(0xfff2);
+            for (const k of Object.keys(st.bottles).sort()) c.push(idOf(k), st.bottles[k] & 0xffff);
+            c.push(0xfff3); c.push(...[...st.used].map(idOf).sort((p, q) => p - q));
+            return String.fromCharCode.apply(null, c) + "#" + ls.join(",");
+        };
+        // Recently made states stay on their node (up to CACHE of them); older ones are rebuilt from the nearest ancestor that kept its state.
+        const CACHE = opts.cache ?? 60000, cached = [];
+        let evict = 0;
+        const keep = (node, st) => { node.st = st; cached.push(node); if (cached.length - evict > CACHE) { cached[evict].st = null; cached[evict++] = null; if (evict > 4 * CACHE) { cached.splice(0, evict); evict = 0; } } };
+        const stateOf = (node) => {
+            if (node.st) return node.st;
+            const path = [];
+            let n = node;
+            for (; !n.st; n = n.parent) path.push(n);
+            let st = n.st;
+            for (let i = path.length - 1; i >= 0; i--) st = apply(st, path[i].mv, path[i].g).st;
+            return st;
+        };
+        push({ parent: null, g: 0, f: hOf(start), st: start });
+        const seen = new Map([[fastKey(start), 0]]);
         const options = [], bySig = new Map();
         let nodes = 0, stopped = null;
         const t0 = Date.now(), maxSteps = opts.maxSteps || 8, maxOptions = opts.maxOptions || 20;
-        const result = (st, steps) => {
-            const blk = st.B.find((b) => b.free && b.a + NODE === X);
-            const below = st.B.filter((b) => b.free && b.a + NODE < X).reduce((m, b) => Math.max(m, b.s), 0);
-            return { steps, size: blk ? blk.s : 0, below, blocks: st.B };
-        };
         while (heap.length) {
             if (options.length >= maxOptions) { stopped = "limit"; break; }
             if (++nodes > (opts.maxNodes || 250000)) { stopped = "budget"; break; }
             if ((nodes & 255) === 0 && Date.now() - t0 > (opts.maxMs || 20000)) { stopped = "time"; break; }
             const cur = pop();
-            if (need(cur.st) === 0) {
-                // useful only if some size skips every gap below X and still fits at X;
-                // otherwise keep going (later steps may fill the bigger gap below)
-                const r0 = result(cur.st, cur.steps);
-                if (r0.below < r0.size) {
+            const cst = stateOf(cur);
+            if (need(cst) >= 0) {
+                // spawn the chosen thing now: an option only if it (or its code or table) starts exactly at X
+                const hit = tryLand(cst, L, X, "land");
+                if (hit) {
+                    const csteps = rebuild(cur).steps;
                     // the same things in a different order count as one option
-                    const sig = cur.steps.map((x) => x.label.replace(/ \(from step \d+\)$/, "")).sort().join("|");
+                    const sig = csteps.map((x) => x.label.replace(/ \(from step \d+\)$/, "")).sort().join("|");
                     const same = bySig.get(sig);
-                    if (same) same.orders++;
-                    else { const o = { ...r0, orders: 1 }; bySig.set(sig, o); options.push(o); }
+                    if (same) { same.orders++; same.otherHeaps.push(cst.B); }
+                    else { const o = { otherHeaps: [], steps: csteps, land: { label: L.label, made: hit.made, what: hit.what }, before: cst.B, blocks: hit.st.B, orders: 1 }; bySig.set(sig, o); options.push(o); }
                     continue;
                 }
             }
             if (cur.g >= maxSteps) continue;
             const g = cur.g + 1;
             const children = new Map();
-            const add = (st, step) => {
-                if (need(st) < 0 && !coverable(st)) return;
-                const k = key(st);
-                if (children.has(k)) { const c = children.get(k); if (c.step.label !== step.label && !c.step.alts.includes(step.label)) c.step.alts.push(step.label); return; }
-                if (seen.has(k) && seen.get(k) <= g) return;
+            for (const mv of moves(cst)) {
+                const r = apply(cst, mv, g);
+                if (!r || (need(r.st) < 0 && !coverable(r.st))) continue;
+                const k = fastKey(r.st);
+                const c = children.get(k);
+                if (c) { if (c.label !== r.step.label && !c.alts.includes(r.step.label)) c.alts.push(r.step.label); continue; }
+                if (seen.has(k) && seen.get(k) <= g) continue;
                 seen.set(k, g);
-                step.alts = [];
-                children.set(k, { st, step });
-            };
-            const live = cur.st.live;
-            const explosives = live.filter((l) => l.explosive).length;
-            const holding = live.some((l) => l.held);
-            // 1. make something
-            for (const a of acts) {
-                if (a.explosive && explosives >= 3) continue; // z_player.c: no new explosive while 3 are live
-                if (a.held && holding) continue; // one drawn/held item at a time
-                if (a.bottle && !(cur.st.bottles[a.bottle] > 0)) continue;
-                const st = clone(cur.st);
-                const made = spawnThing(st, a, g);
-                if (!made) continue;
-                if (a.bottle) st.bottles = { ...st.bottles, [a.bottle]: st.bottles[a.bottle] - 1, empty: (st.bottles.empty || 0) + 1 };
-                add(st, { label: a.label, group: a.group, made, freed: [] });
+                children.set(k, { node: { parent: cur, mv, g, f: g + hOf(r.st), alts: null, st: null }, st: r.st, label: r.step.label, alts: [] });
             }
-            // 2. something made earlier goes away
-            for (const l of live) {
-                const variants = [{ gone: l.gone, then: l.then }];
-                if (l.alt) variants.push(l.alt);
-                for (const v of variants) {
-                    const st = clone(cur.st);
-                    st.live = st.live.filter((x) => x.id !== l.id);
-                    let made = [];
-                    if (v.then) { made = spawnThing(st, v.then, g); if (!made) continue; }
-                    const freed = [];
-                    for (const [name, ptrs] of l.parts) { freed.push([name, ptrs[0]]); const c = deletePart(st, name, ptrs); if (c) freed.push([`${name} code`, c]); }
-                    if (l.refill && (st.bottles.empty || 0) > 0) st.bottles = { ...st.bottles, [l.refill]: (st.bottles[l.refill] || 0) + 1, empty: st.bottles.empty - 1 };
-                    add(st, { label: `${cap(v.gone)} (from step ${l.step})`, made, freed, removal: true });
-                }
-            }
-            // 3. break, kill or collect something already in the scene
-            for (const s of scene) {
-                if (cur.st.used.has(s.id)) continue;
-                const st = clone(cur.st);
-                st.used = new Set(st.used); st.used.add(s.id);
-                let made = [];
-                if (s.parts.length) { made = spawnThing(st, { key: "drop", label: s.parts[0][0] === "En_Sw" ? "Skulltula and drop" : "Drop", parts: s.parts, gone: "the drop goes (collect it, or it despawns)" }, g); if (!made) continue; }
-                const freed = [];
-                if (s.kill) {
-                    freed.push([s.x.name, s.x.inst]);
-                    const c = deletePart(st, s.x.name, [s.x.inst]);
-                    if (c) freed.push([`${s.x.name} code (last one)`, c]);
-                }
-                add(st, { label: `${s.verb} at ${s.where}`, made, freed, drop: s.text, note: s.note });
-            }
-            for (const { st, step } of children.values()) push({ st, g, f: g + hOf(st), steps: [...cur.steps, step] });
+            for (const c of children.values()) { if (c.alts.length) c.node.alts = c.alts; keep(c.node, c.st); push(c.node); }
         }
-        // simplest first: fewer steps, then everyday items over bottles, magic and songs, then the widest landing range
+        // simplest first: fewer steps, then everyday items over bottles, magic and songs
         const W = { Explosives: 0, Shooting: 0, Tools: 0.1, Bottles: 0.2, Magic: 0.3, Songs: 0.3 };
         const weight = (o) => o.steps.reduce((t, x) => t + (x.removal ? 0.05 : x.group ? W[x.group] || 0 : 0.1), 0);
-        options.sort((a, b) => a.steps.length - b.steps.length || weight(a) - weight(b) || a.below - b.below);
+        options.sort((a, b) => a.steps.length - b.steps.length || weight(a) - weight(b));
         return { options, nodes, stopped, ms: Date.now() - t0 };
     }
+
 
     return { fromDump, fromAddress, solve, ACTIONS, actor, hex, ID, NODE, al16, ADDR, cap };
 })();
@@ -589,7 +697,7 @@ function heapView(blocks, target) {
   const rows = blocks.map((b) => {
     const d = b.a + NODE, tgt = target === d;
     const what = b.free ? "free" : esc(b.label || "allocation");
-    return `<tr class="${b.free ? "free" : ""} ${b.step ? "new" : ""} ${tgt ? "tgt" : ""}" ${tgt ? 'data-tgt="1"' : ""}><td><span class="dot" style="background:${colorOf(b)}"></span>${hex(d)}</td><td>0x${hex(b.s, 1)}</td><td class="c">${what}${b.step ? `<span class="tag">step ${b.step}</span>` : ""}${tgt ? ` ← next allocation lands here` : ""}</td></tr>`;
+    return `<tr class="${b.free ? "free" : ""} ${b.step ? "new" : ""} ${tgt ? "tgt" : ""}" ${tgt ? 'data-tgt="1"' : ""}><td><span class="dot" style="background:${colorOf(b)}"></span>${hex(d)}</td><td>0x${hex(b.s, 1)}</td><td class="c">${what}${b.step ? `<span class="tag">${b.step === "land" ? "lands" : `step ${b.step}`}</span>` : ""}${tgt ? (b.free ? ` ← next allocation lands here` : ` ← at the address`) : ""}</td></tr>`;
   }).join("");
   return `<div class="legend"><span><i style="background:var(--actor)"></i>actor</span><span><i style="background:var(--code)"></i>actor code</span><span><i style="background:var(--other)"></i>other</span><span><i style="background:var(--free);outline:1px solid var(--line)"></i>free</span>${blocks.some((b) => b.step) ? `<span><i style="background:var(--new)"></i>added by the steps</span>` : ""}${target ? `<span><i style="background:var(--target)"></i>target</span>` : ""}</div>
     <div class="strip">${strip}</div><div class="axis"><span>${hex(lo + NODE)}</span><span>${hex(hi)}</span></div>
@@ -620,15 +728,38 @@ function renderItems() {
 }
 renderItems();
 
+// ---------- what will land there ----------
+for (const a of ACTORS) if (a) $("actorNames").append(new Option(a[0]));
+function renderLand() {
+  const sel = $("land"), keep = sel.value;
+  const groups = [...new Set(Fill.ACTIONS.map((a) => a.group))];
+  sel.innerHTML = `<option value="">Choose…</option>` + groups.map((g) => `<optgroup label="${g}">${Fill.ACTIONS.filter((a) => a.group === g).map((a) => {
+    const why = usable(a);
+    return `<option value="${a.key}"${why ? " disabled" : ""}>${esc(a.label)}${why ? ` (${esc(why)})` : ""}</option>`;
+  }).join("")}</optgroup>`).join("") + `<optgroup label="Anything else"><option value="@actor">Another actor, by name…</option></optgroup>`;
+  sel.value = [...sel.options].some((o) => o.value === keep && !o.disabled) ? keep : "";
+  $("landOther").hidden = sel.value !== "@actor";
+}
+function landChoice() {
+  const v = $("land").value;
+  if (!v) return null;
+  if (v !== "@actor") return { key: v };
+  const name = $("landActor").value.trim();
+  return Fill.ID.has(name) ? { actor: name } : null;
+}
+renderLand();
+$("land").onchange = () => { $("landOther").hidden = $("land").value !== "@actor"; ready(); };
+$("landActor").oninput = ready;
+
 for (const r of document.querySelectorAll("input[name=mode]")) r.onchange = () => {
   mode = r.value;
   $("dumpMode").hidden = mode !== "dump"; $("addrMode").hidden = mode !== "addr";
   $("out").innerHTML = "";
-  renderItems(); ready();
+  renderItems(); renderLand(); ready();
 };
-for (const r of document.querySelectorAll("input[name=age]")) r.onchange = renderItems;
+for (const r of document.querySelectorAll("input[name=age]")) r.onchange = () => { renderItems(); renderLand(); ready(); };
 $("startAddr").oninput = ready;
-function ready() { $("go").disabled = mode === "dump" ? !dump : !/^(0x)?[0-9a-f]{1,8}$/i.test($("startAddr").value.trim()); }
+function ready() { $("go").disabled = !landChoice() || (mode === "dump" ? !dump : !/^(0x)?[0-9a-f]{1,8}$/i.test($("startAddr").value.trim())); }
 
 // ---------- dump ----------
 $("dump").onchange = async () => {
@@ -646,7 +777,7 @@ $("dump").onchange = async () => {
       : `<label class="brk"><input type="checkbox" checked data-id="${esc(s.id)}"><span>${esc(s.verb)} at ${s.where}<small>${[s.text ? `Drops ${esc(s.text)}` : "", s.kill ? `frees its block at ${hex(s.x.inst)}` : "the stump stays", s.note || ""].filter(Boolean).join("; ")}</small></span></label>`).join("")
       : `<p class="muted">Nothing in the loaded rooms that Link can break, kill or collect.</p>`;
     $("now").hidden = false;
-    renderItems(); ready();
+    renderItems(); renderLand(); ready();
   } catch (err) { st.className = "status err"; st.textContent = err.message; }
 };
 
@@ -675,52 +806,58 @@ function stepsHTML(steps) {
 // ---------- solve in a worker ----------
 const workerURL = URL.createObjectURL(new Blob([$("engineSrc").textContent, `
 self.onmessage = (e) => {
-  const { mode, raw, start, address, on, scene } = e.data;
+  const { mode, raw, start, address, on, scene, land, limits } = e.data;
   try {
     const d = mode === "dump" ? Fill.fromDump(raw) : Fill.fromAddress(start);
     const ids = new Set(scene);
-    self.postMessage({ type: "done", r: Fill.solve(d, { address, on, useScene: (s) => ids.has(s.id) }) });
+    self.postMessage({ type: "done", r: Fill.solve(d, { address, on, land, useScene: (s) => ids.has(s.id), ...(limits || {}) }) });
   } catch (err) { self.postMessage({ type: "error", message: err.message }); }
 };`], { type: "text/javascript" }));
 let worker = null;
 
-$("go").onclick = () => {
+const LONGER = { maxOptions: 60, maxMs: 90000, maxNodes: 900000 };
+$("go").onclick = () => runSearch(null);
+function runSearch(limits) {
   const out = $("out");
   try {
     const address = hexIn("addr", "The target address");
     const start = mode === "addr" ? hexIn("startAddr", "The start address") : null;
     if (mode === "addr" && address < start) throw new Error("The target has to be at or above where free memory starts.");
+    const land = landChoice();
+    if (!land) throw new Error($("land").value === "@actor" ? "That isn't an actor name the page knows (for example En_Item00)." : "Choose what will land there.");
     const on = {};
     for (const a of Fill.ACTIONS) on[a.key] = !!($("on_" + a.key) && $("on_" + a.key).checked);
     const scene = mode === "dump" ? [...document.querySelectorAll("#scene input[data-id]:checked")].map((c) => c.dataset.id) : [];
     if (worker) worker.terminate();
     worker = new Worker(workerURL);
-    $("go").disabled = true; $("progress").textContent = "Searching…"; out.innerHTML = "";
+    $("go").disabled = true; $("progress").textContent = limits ? "Searching for up to 90 seconds…" : "Searching…"; out.innerHTML = "";
     worker.onmessage = (e) => {
       worker.terminate(); worker = null; $("go").disabled = false; $("progress").textContent = "";
       if (e.data.type === "error") { out.innerHTML = `<p class="verdict bad">${esc(e.data.message)}</p>`; return; }
-      show(e.data.r, address);
+      show(e.data.r, address, limits);
     };
-    worker.postMessage({ mode, raw: mode === "dump" ? dump.raw : null, start, address, on, scene });
+    worker.postMessage({ mode, raw: mode === "dump" ? dump.raw : null, start, address, on, scene, land, limits });
   } catch (err) { out.innerHTML = `<p class="verdict bad">${esc(err.message)}</p>`; }
 };
-function show(r, address) {
+function show(r, address, limits) {
+  const longer = r.stopped && !limits ? `<p><button type="button" class="more" id="longer">Search longer</button> <span class="muted">Up to 90 seconds and 60 options. Longer setups only show up once the shorter ones are listed.</span></p>` : "";
   const out = $("out"), where = `<span class="addr">${hex(address)}</span>`;
   if (!r.options.length) {
-    out.innerHTML = `<p class="verdict bad">No way found to fill exactly up to ${where}.</p><p class="muted">${esc(r.reason || (r.stopped ? "The search hit its limit (8 steps or the time budget)." : "Every combination up to 8 steps was tried."))}</p>`;
+    out.innerHTML = `<p class="verdict bad">No way found to make it land at ${where}.</p><p class="muted">${esc(r.reason || (r.stopped ? "The search hit its limit (8 steps or the time budget)." : "Every combination up to 8 steps was tried."))}</p>` + longer;
+    if ($("longer")) $("longer").onclick = () => runSearch(LONGER);
     return;
   }
   const more = r.stopped === "limit" ? ` Showing the first ${r.options.length}; there are more.` : r.stopped ? " The search hit its time or size limit, so there may be more." : "";
-  out.innerHTML = `<p class="verdict ok">${r.options.length} option${r.options.length > 1 ? "s" : ""}, simplest first.</p><p class="muted">${more.trim()}</p>` +
+  out.innerHTML = `<p class="verdict ok">${r.options.length} option${r.options.length > 1 ? "s" : ""}, simplest first.</p><p class="muted">${more.trim()}</p>${longer}` +
     r.options.map((o, i) => {
-      const upTo = o.size >= 0x100000 ? "" : ` (up to 0x${hex(o.size, 1)})`;
-      const range = o.below ? `bigger than 0x${hex(o.below, 1)} bytes${upTo}` : o.size >= 0x100000 ? "of any size" : `up to 0x${hex(o.size, 1)} bytes`;
       return `<div class="opt"><h3>Option ${i + 1} · ${o.steps.length ? `${o.steps.length} step${o.steps.length > 1 ? "s" : ""}` : "nothing to do"}</h3>
         ${o.steps.length ? stepsHTML(o.steps) : ""}
-        <p class="muted">Then the next allocation ${range} lands at ${where}.${o.orders > 1 ? ` These steps also work in ${o.orders - 1} other order${o.orders > 2 ? "s" : ""}.` : ""}</p>
+        <p>Then <b>${esc(o.land.label)}</b> <span class="muted">→ ${o.land.made.length > 4 ? `${o.land.made.length} actors from <span class="addr">${hex(o.land.made[0].inst)}</span>` : o.land.made.map(line).join("; ")}</span></p>
+        <p class="muted">${esc(o.land.what)} lands at ${where}.${o.orders > 1 ? ` The same steps also work in ${o.orders - 1} other order${o.orders > 2 ? "s" : ""} (the heap below can differ).` : ""}</p>
         <details data-i="${i}"><summary>Heap after</summary></details></div>`;
     }).join("") +
     `<p class="muted">Timing is ignored: things that go away on their own (bombs, nuts, the boomerang) are assumed to stay until a step says they go.</p>`;
+  if ($("longer")) $("longer").onclick = () => runSearch(LONGER);
   for (const d of out.querySelectorAll("details[data-i]")) d.addEventListener("toggle", () => {
     if (!d.open || d.dataset.done) return;
     d.dataset.done = 1;
