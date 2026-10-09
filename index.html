@@ -145,6 +145,7 @@ ol { padding-left: 22px; margin: 6px 0; } li { margin: 4px 0; }
         <li>Removing an actor frees it and its tables; normal code is freed with its last actor.</li>
         <li>Pot, crate and bush drops as <code>Item_DropCollectible</code> decides them for Link's age, items, health and collected flags.</li>
         <li>At most 3 bombs, bombchus and explosions out at once; one drawn or held item at a time. The thing that lands counts too.</li>
+        <li>Catching a bottle bug always takes the oldest one out, and needs an empty bottle.</li>
       </ul></div>
       <div><b>Not modeled</b><ul>
         <li>Timing. Things that go away on their own (bombs, nuts, the boomerang, drops) stay until a step says they go.</li>
@@ -207,7 +208,7 @@ const Fill = (function () {
             alt: { gone: "the nut hits something", then: { key: "flash", label: "Nut flash", parts: [["En_M_Fire1"]], gone: "the flash ends" } } },
         { key: "boomerang", group: "Tools", label: "Throw the boomerang", age: "both", need: (s) => s.item(12) === 0x0e, parts: [["En_Boom"]], gone: "the boomerang comes back" },
         { key: "hookshot", group: "Tools", label: "Take out the hookshot", age: "adult", need: (s) => s.item(9) === 0x0a || s.item(9) === 0x0b, parts: [["Arms_Hook"]], held: true, gone: "put the hookshot away" },
-        { key: "bugs", group: "Bottles", label: "Release bugs", age: "both", bottle: 0x1d, parts: [["En_Insect"], ["En_Insect"], ["En_Insect"]], gone: "a bug goes (catch it to refill the bottle, or it digs away)", refill: true, note: "3 bugs" },
+        { key: "bugs", group: "Bottles", label: "Release bugs", age: "both", bottle: 0x1d, parts: [["En_Insect"], ["En_Insect"], ["En_Insect"]], gone: "catch a bug back (the game always gives you the oldest one out)", refill: true, note: "3 bugs" },
         { key: "fish", group: "Bottles", label: "Release a fish", age: "both", bottle: 0x19, parts: [["En_Fish"]], gone: "the fish goes (catch it to refill the bottle, or it dies)", refill: true },
         { key: "fairy", group: "Bottles", label: "Release a fairy", age: "both", bottle: 0x18, parts: [["En_Elf"]], gone: "the fairy goes (catch it to refill the bottle, or it vanishes)", refill: true },
         { key: "blueFire", group: "Bottles", label: "Release blue fire", age: "both", bottle: 0x1c, parts: [["En_Ice_Hono"], ...Array(18).fill(["En_Ice_Hono"])], together: true, gone: "the blue fire burns out", note: "spreads into 18 small flames" },
@@ -492,7 +493,8 @@ const Fill = (function () {
         // bottles: count of each content, plus empty ones
         const bottles = { empty: 0 };
         if (dump.bottles) for (const b of dump.bottles) { if (b === 0x14) bottles.empty++; else if (b !== 0xff) bottles[b] = (bottles[b] || 0) + 1; }
-        if (dump.addressOnly) for (const a of ACTIONS) if (a.bottle && opts.on[a.key]) bottles[a.bottle] = 1;
+        // inventory isn't checked: a ticked bottle item gets a bottle of it if the save has none
+        for (const a of ACTIONS) if (a.bottle && (opts.on[a.key] || (opts.land && opts.land.key === a.key)) && !(bottles[a.bottle] > 0)) bottles[a.bottle] = 1;
         const start = { B: dump.blocks.map((b) => ({ ...b })), ovl: { ...dump.ovl }, abs: dump.absolute, live: [], bottles, used: new Set(), seq: 0 };
         if (need(start) < 0 && !coverable(start)) return { options: [], reason: `${hex(X)} isn't in free memory, and nothing allowed here can free it.` };
 
@@ -513,7 +515,11 @@ const Fill = (function () {
                 if (a.bottle && !(st.bottles[a.bottle] > 0)) continue;
                 out.push({ t: 0, a });
             }
-            for (const l of live) { out.push({ t: 1, id: l.id, alt: false }); if (l.alt) out.push({ t: 1, id: l.id, alt: true }); }
+            // Bottle bugs: a catch always takes the oldest bug out (each offers the item; the last to ask wins, and
+            // category lists run newest-first). Left alone they dig away after 200-240 frames, modeled as all at once.
+            const bugs = live.filter((l) => l.key === "bugs");
+            for (const l of live) { if (l.key === "bugs") continue; out.push({ t: 1, id: l.id, alt: false }); if (l.alt) out.push({ t: 1, id: l.id, alt: true }); }
+            if (bugs.length) { if ((st.bottles.empty || 0) > 0) out.push({ t: 1, id: Math.min(...bugs.map((l) => l.id)), alt: false }); out.push({ t: 3 }); }
             groups.forEach((grp, gi) => { if (grp.some((x) => !st.used.has(x.id))) out.push({ t: 2, gi }); });
             return out;
         };
@@ -536,6 +542,13 @@ const Fill = (function () {
                 for (const [name, ptrs] of l.parts) { freed.push([name, ptrs[0]]); const c = deletePart(st, name, ptrs); if (c) freed.push([`${name} code`, c]); }
                 if (l.refill && (st.bottles.empty || 0) > 0) st.bottles = { ...st.bottles, [l.refill]: (st.bottles[l.refill] || 0) + 1, empty: st.bottles.empty - 1 };
                 return { st, step: { label: `${cap(v.gone)} (from step ${l.step})`, made, freed, removal: true } };
+            }
+            if (mv.t === 3) {
+                const bugs = st0.live.filter((l) => l.key === "bugs");
+                st.live = st.live.filter((l) => l.key !== "bugs");
+                const freed = [];
+                for (const l of bugs) for (const [name, ptrs] of l.parts) { freed.push([name, ptrs[0]]); const c = deletePart(st, name, ptrs); if (c) freed.push([`${name} code`, c]); }
+                return { st, step: { label: `The bugs dig away (from step ${Math.min(...bugs.map((l) => l.step))})`, made: [], freed, removal: true } };
             }
             const left = groups[mv.gi].filter((x) => !st0.used.has(x.id));
             const s = left[0];
@@ -698,8 +711,7 @@ function usable(a) {
   if (!dump) return "";
   const s = dump.save;
   if (a.age !== "both" && (a.age === "child") !== s.child) return `${a.age} only`;
-  if (a.bottle) return dump.bottles.includes(a.bottle) ? "" : "no bottle with it";
-  return a.need(s) ? "" : "not in your inventory";
+  return ""; // inventory isn't checked: anything Link's age allows can be used
 }
 function renderItems() {
   const box = $("items");

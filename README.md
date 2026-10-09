@@ -12,7 +12,7 @@ Give an address and what should land there, and the page lists every way it find
   - the heap blocks, starting from the arena node at 0x801DB2C0;
   - the live actors, from `play->actorCtx` lists at 0x801CA990;
   - which actor code is loaded, from `gActorOverlayTable` at 0x800E8B70;
-  - Link's age, items, ammo, bottles, songs and magic, from `gSaveContext` at 0x8011AC80.
+  - Link's age, items and health, from `gSaveContext` at 0x8011AC80. Only the age limits what Link can make; the page doesn't check whether you have an item, ammo, a bottle of it, a song or magic. Items and health still decide what pots and crates drop.
 
   It shows the heap, and offers the things already in the scene that Link can make go away:
   - **Pots and crates:** break them. Their fixed drop is worked out the way `Item_DropCollectible` does it.
@@ -30,14 +30,14 @@ The solver spawns that thing after the steps, exactly as the game would (its cod
 
 ## What Link can make
 
-The page starts every usable item checked, and you can turn any of them off.
+The page starts every item Link's age allows checked, and you can turn any of them off.
 
 | Group | Items |
 |---|---|
 | Explosives | bomb; bombchu (exploding spawns a separate explosion actor) |
 | Shooting | slingshot seed; arrow (+2 tables); fire, ice and light arrows (+ their effect actor); Deku nut (on a hit, spawns a flash actor) |
 | Tools | boomerang (either age); hookshot |
-| Bottles | bugs (3 actors; catching one refills the bottle); fish; fairy; blue fire (19 actors) |
+| Bottles | bugs (3 actors; catching one back needs an empty bottle and always takes the oldest bug out; left alone they dig away, modeled as all at once); fish; fairy; blue fire (19 actors) |
 | Magic | Din's Fire; Nayru's Love; Farore's Wind (+ a table); quick and charged magic spin |
 | Songs | Zelda's Lullaby, Saria's, Epona's, Sun's Song, Song of Time, Song of Storms |
 
