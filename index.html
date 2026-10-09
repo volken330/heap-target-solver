@@ -445,8 +445,14 @@ const Fill = (function () {
 
     // ---------------- search ----------------
     // What will land at the address: one of Link's actions ({ key }) or any actor by name ({ actor }).
-    function landDef(land) {
+    function landDef(land, dump) {
         if (!land) throw new Error("Choose what will land there.");
+        if (land.scene) {
+            // the drop from breaking, cutting or killing something in the scene, done as the last step
+            const s = ((dump && dump.scene) || []).find((x) => x.id === land.scene);
+            if (!s || s.skip || !s.parts.length) throw new Error("That scene item doesn't drop anything the page can place.");
+            return { key: "land", label: `${s.verb} at ${s.where}`, parts: s.parts, gone: "the drop goes", byName: true, scene: s };
+        }
         if (land.key) {
             const a = ACTIONS.find((x) => x.key === land.key);
             if (!a) throw new Error(`Unknown item ${land.key}.`);
@@ -464,10 +470,16 @@ const Fill = (function () {
             if (L.bottle && !(st.bottles[L.bottle] > 0)) return null;
         }
         const s2 = clone(st);
+        if (L.scene && st.used.has(L.scene.id)) return null;
         const made = spawnThing(s2, L, step);
         if (!made) return null;
+        if (L.scene) {
+            // the drop spawns first, then the thing that dropped it is removed
+            s2.used = new Set(s2.used); s2.used.add(L.scene.id);
+            if (L.scene.kill) deletePart(s2, L.scene.x.name, [L.scene.x.inst]);
+        }
         for (const m of made) {
-            if (m.inst === X) return { st: s2, made, what: m.name };
+            if (m.inst === X) return { st: s2, made, what: L.scene ? `The drop (${m.name})` : m.name };
             if (m.code === X) return { st: s2, made, what: m.codeWhat };
             if (m.ptrs.slice(1).includes(X)) return { st: s2, made, what: `${m.name} table` };
         }
@@ -477,9 +489,9 @@ const Fill = (function () {
     function solve(dump, opts) {
         const X = opts.address;
         if (X % 16) return { options: [], reason: `Allocations start on 16-byte boundaries, so ${hex(X)} can never be one. Try ${hex(X - (X % 16))} or ${hex(X - (X % 16) + 16)}.` };
-        const L = landDef(opts.land);
+        const L = landDef(opts.land, dump);
         const acts = ACTIONS.filter((a) => opts.on[a.key]);
-        const scene = (dump.scene || []).filter((s) => !s.skip && (!opts.useScene || opts.useScene(s)));
+        const scene = (dump.scene || []).filter((s) => !s.skip && (!opts.useScene || opts.useScene(s)) && !(L.scene && s.id === L.scene.id));
         // Things in the scene that change the heap the same way (bushes with the same drop that stay put) are
         // interchangeable: the search uses the first one left and lists the others as alternatives.
         const groups = [], gi = new Map();
@@ -646,7 +658,7 @@ const Fill = (function () {
                     const sig = csteps.map((x) => x.label.replace(/ \(from step \d+\)$/, "")).sort().join("|");
                     const same = bySig.get(sig);
                     if (same) { same.orders++; same.otherHeaps.push(cst.B); }
-                    else { const o = { otherHeaps: [], steps: csteps, land: { label: L.label, made: hit.made, what: hit.what }, before: cst.B, blocks: hit.st.B, orders: 1 }; bySig.set(sig, o); options.push(o); }
+                    else { const o = { otherHeaps: [], steps: csteps, land: { label: L.label, made: hit.made, what: hit.what }, before: cst.B, blocks: hit.st.B, orders: 1, node: cur, final: hit.st }; bySig.set(sig, o); options.push(o); }
                     continue;
                 }
             }
@@ -669,6 +681,49 @@ const Fill = (function () {
         const W = { Explosives: 0, Shooting: 0, Tools: 0.1, Bottles: 0.2, Magic: 0.3, Songs: 0.3 };
         const weight = (o) => o.steps.reduce((t, x) => t + (x.removal ? 0.05 : x.group ? W[x.group] || 0 : 0.1), 0);
         options.sort((a, b) => a.steps.length - b.steps.length || weight(a) - weight(b));
+        // Catching released bugs, fish or fairies back: at which points it leaves the landing unchanged.
+        // A catch always takes the oldest bug out, and needs an empty bottle.
+        const recatch = (o) => {
+            const path = [];
+            for (let n = o.node; n.parent; n = n.parent) path.push(n);
+            path.reverse();
+            const states = [start];
+            for (const n of path) states.push(apply(states[states.length - 1], n.mv, n.g).st);
+            const isBug = (l) => l.key === "bugs";
+            const oldestBug = (st) => st.live.filter(isBug).reduce((m, l) => (!m || l.id < m.id ? l : m), null);
+            const out = [];
+            for (const kind of ["bugs", "fish", "fairy"]) {
+                const name = { bugs: "bug", fish: "fish", fairy: "fairy" }[kind];
+                if (!states.some((st) => st.live.some((l) => l.key === kind))) continue;
+                const safe = [], unsafe = [];
+                for (let k = 1; k <= path.length; k++) {
+                    const sk = states[k];
+                    const u = kind === "bugs" ? oldestBug(sk) : sk.live.find((l) => l.key === kind);
+                    if (!u || !((sk.bottles.empty || 0) > 0)) continue;
+                    let st = apply(sk, { t: 1, id: u.id, alt: false }, 0).st, ok = true;
+                    for (let j = k; j < path.length && ok; j++) {
+                        let mv = path[j].mv;
+                        if (mv.t === 1) {
+                            const l0 = states[j].live.find((l) => l.id === mv.id);
+                            if (l0 && isBug(l0)) { const ob = oldestBug(st); if (!ob || !((st.bottles.empty || 0) > 0)) { ok = false; break; } mv = { ...mv, id: ob.id }; }
+                            else if (!st.live.some((l) => l.id === mv.id)) { ok = false; break; }
+                        }
+                        if (mv.t === 3 && !st.live.some(isBug)) { ok = false; break; }
+                        if (mv.t === 0 && mv.a.bottle && !(st.bottles[mv.a.bottle] > 0)) { ok = false; break; }
+                        const r = apply(st, mv, path[j].g);
+                        if (!r) { ok = false; break; }
+                        st = r.st;
+                    }
+                    (ok && tryLand(st, L, X, "land") ? safe : unsafe).push({ after: k, ptr: u.parts[0][1][0] });
+                }
+                const fin = o.final.live.filter((l) => l.key === kind);
+                const after = fin.length > 0 && (o.final.bottles.empty || 0) > 0
+                    ? { ptr: (kind === "bugs" ? fin.reduce((m, l) => (l.id < m.id ? l : m)) : fin[0]).parts[0][1][0] } : null;
+                out.push({ name, safe, unsafe, after });
+            }
+            return out;
+        };
+        for (const o of options) { try { o.recatch = recatch(o); } catch (e) { o.recatch = []; } delete o.node; delete o.final; }
         return { options, nodes, stopped, ms: Date.now() - t0 };
     }
 
@@ -736,13 +791,19 @@ function renderLand() {
   sel.innerHTML = `<option value="">Choose…</option>` + groups.map((g) => `<optgroup label="${g}">${Fill.ACTIONS.filter((a) => a.group === g).map((a) => {
     const why = usable(a);
     return `<option value="${a.key}"${why ? " disabled" : ""}>${esc(a.label)}${why ? ` (${esc(why)})` : ""}</option>`;
-  }).join("")}</optgroup>`).join("") + `<optgroup label="Anything else"><option value="@actor">Another actor, by name…</option></optgroup>`;
+  }).join("")}</optgroup>`).join("") + sceneLand() + `<optgroup label="Anything else"><option value="@actor">Another actor, by name…</option></optgroup>`;
   sel.value = [...sel.options].some((o) => o.value === keep && !o.disabled) ? keep : "";
   $("landOther").hidden = sel.value !== "@actor";
+}
+// drops from things in the dump's scene: the break, cut or kill is the last step
+function sceneLand() {
+  const list = (mode === "dump" && dump ? dump.scene : []).filter((s) => !s.skip && s.parts && s.parts.length);
+  return list.length ? `<optgroup label="A drop from the scene (done last)">${list.map((s) => `<option value="@scene:${esc(s.id)}">${esc(s.verb)} at ${esc(s.where)} → ${esc(s.text)}</option>`).join("")}</optgroup>` : "";
 }
 function landChoice() {
   const v = $("land").value;
   if (!v) return null;
+  if (v.startsWith("@scene:")) return { scene: v.slice(7) };
   if (v !== "@actor") return { key: v };
   const name = $("landActor").value.trim();
   return Fill.ID.has(name) ? { actor: name } : null;
@@ -839,6 +900,17 @@ function runSearch(limits) {
     worker.postMessage({ mode, raw: mode === "dump" ? dump.raw : null, start, address, on, scene, land, limits });
   } catch (err) { out.innerHTML = `<p class="verdict bad">${esc(err.message)}</p>`; }
 };
+// when a released bug, fish or fairy can be caught back without changing where the thing lands
+function recatchHTML(o) {
+  const lines = (o.recatch || []).map((c) => {
+    const which = (p) => c.name === "bug" ? ` (that catches the bug at <span class="addr">${hex(p)}</span>)` : "";
+    const ok = c.safe.map((x) => `after step ${x.after}${which(x.ptr)}`);
+    if (c.after) ok.push(`any time after it lands${which(c.after.ptr)}`);
+    const not = c.unsafe.length ? ` Not after step${c.unsafe.length > 1 ? "s" : ""} ${c.unsafe.map((x) => x.after).join(", ")}.` : "";
+    return ok.length ? `Catching a ${c.name} back is safe ${ok.join("; ")}.${not}` : `There's no point where catching a ${c.name} back leaves this landing intact.`;
+  });
+  return lines.length ? `<p class="muted">${lines.join("<br>")}${o.recatch.some((c) => c.name === "bug") ? " A catch always takes the oldest bug out and needs an empty bottle." : ""}</p>` : "";
+}
 function show(r, address, limits) {
   const longer = r.stopped && !limits ? `<p><button type="button" class="more" id="longer">Search longer</button> <span class="muted">Up to 90 seconds and 60 options. Longer setups only show up once the shorter ones are listed.</span></p>` : "";
   const out = $("out"), where = `<span class="addr">${hex(address)}</span>`;
@@ -854,6 +926,7 @@ function show(r, address, limits) {
         ${o.steps.length ? stepsHTML(o.steps) : ""}
         <p>Then <b>${esc(o.land.label)}</b> <span class="muted">→ ${o.land.made.length > 4 ? `${o.land.made.length} actors from <span class="addr">${hex(o.land.made[0].inst)}</span>` : o.land.made.map(line).join("; ")}</span></p>
         <p class="muted">${esc(o.land.what)} lands at ${where}.${o.orders > 1 ? ` The same steps also work in ${o.orders - 1} other order${o.orders > 2 ? "s" : ""} (the heap below can differ).` : ""}</p>
+        ${recatchHTML(o)}
         <details data-i="${i}"><summary>Heap after</summary></details></div>`;
     }).join("") +
     `<p class="muted">Timing is ignored: things that go away on their own (bombs, nuts, the boomerang) are assumed to stay until a step says they go.</p>`;

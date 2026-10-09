@@ -24,7 +24,7 @@ Give an address and what should land there, and the page lists every way it find
 ## End point
 
 - **Fill the heap up to:** the address.
-- **What will land there (required):** anything Link can make (the same list as below, whether or not it's ticked there), or any other actor by name, such as `En_Item00` for a drop.
+- **What will land there (required):** anything Link can make (the same list as below, whether or not it's ticked there); with a dump, the drop from something in the scene (killing a Deku Baba, cutting a bush, breaking a pot), done as the last step; or any other actor by name, such as `En_Item00`.
 
 The solver spawns that thing after the steps, exactly as the game would (its code first if it isn't loaded, then the actor, then its tables). An option counts only if the thing itself, its code or one of its tables starts at the address. So for a bombchu whose code isn't loaded yet, the address can be where the code goes.
 
@@ -52,4 +52,5 @@ Sizes, code sizes and code type (normal, persistent or absolute) come from the h
   - bottles need their contents.
 - **Ranking:** options are ranked by number of steps, then everyday items over bottles, magic and songs.
 - **Merging:** the same steps in a different order count as one option, though the heap below the address can differ between orders. Interchangeable steps are shown as alternatives: songs with the same footprint, and things in the scene that change the heap the same way (such as bushes with the same drop). A slingshot seed and a Deku nut use the same actor, so an option listed with one usually also works with the other.
+- **Catching back:** for options that release bugs, a fish or a fairy, the page says after which steps catching one back would leave the landing unchanged, and which bug the catch takes (always the oldest out). After the thing has landed, catching back never moves it, but the freed slot is free memory for anything allocated later.
 - **Limits:** the search stops at 8 steps, 20 options or about 20 seconds. **Search longer** reruns it for up to 90 seconds and 60 options. Options come out fewest steps first, so a longer setup only appears once every shorter one has been listed.
