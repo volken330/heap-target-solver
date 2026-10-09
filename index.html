@@ -81,6 +81,8 @@ ol { padding-left: 22px; margin: 6px 0; } li { margin: 4px 0; }
 .choices { display: grid; gap: 4px; margin-bottom: 12px; }
 .choice { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; font-size: 14px; }
 .choice small { display: block; color: var(--muted); font-size: 12.5px; }
+.warn { color: var(--bad); font-size: 12px; }
+.life table { font: 13px var(--sans); margin-top: 4px; } .life td, .life th { white-space: normal; vertical-align: top; }
 [hidden] { display: none !important; }
 </style>
 </head>
@@ -723,7 +725,75 @@ const Fill = (function () {
             }
             return out;
         };
-        for (const o of options) { try { o.recatch = recatch(o); } catch (e) { o.recatch = []; } delete o.node; delete o.final; }
+        // How long each temporary thing has to stay: try removing it after each step and see if the landing survives.
+        const timing = (o) => {
+            const path = [];
+            for (let nd = o.node; nd.parent; nd = nd.parent) path.push(nd);
+            path.reverse();
+            const n = path.length;
+            const moves = path.map((nd) => ({ mv: nd.mv, g: nd.g }));
+            const states = [start];
+            for (const m of moves) states.push(apply(states[states.length - 1], m.mv, m.g).st);
+            const landsAfter = (list) => {
+                let st = start;
+                for (const m of list) {
+                    const mv = m.mv;
+                    if (mv.t === 1 && !st.live.some((l) => l.id === mv.id)) return false;
+                    if (mv.t === 3 && !st.live.some((l) => l.key === "bugs")) return false;
+                    if (mv.t === 0 && mv.a.bottle && !(st.bottles[mv.a.bottle] > 0)) return false;
+                    if (mv.t === 0 && mv.a.explosive && st.live.filter((l) => l.explosive).length >= 3) return false;
+                    if (mv.t === 0 && mv.a.held && st.live.some((l) => l.held)) return false;
+                    const r = apply(st, mv, m.g);
+                    if (!r) return false;
+                    st = r.st;
+                }
+                return !!tryLand(st, L, X, "land");
+            };
+            const out = [];
+            const seen = new Set();
+            for (let k = 1; k <= n; k++) for (const u of states[k].live) {
+                if (seen.has(u.id)) continue;
+                seen.add(u.id);
+                const c = k; // made at step c
+                let r = 0, fixed = false;
+                for (let j = c; j < n; j++) {
+                    const mv = moves[j].mv;
+                    if (mv.t === 1 && mv.id === u.id) { r = j + 1; const v = mv.alt ? u.alt : u; fixed = !!(v && v.then); break; }
+                    if (mv.t === 3 && u.key === "bugs") { r = j + 1; fixed = true; break; }
+                }
+                const label = (u.label || u.key) + (u.parts.length > 1 && u.key === "bugs" ? "" : "");
+                const what = { key: u.key, label, made: c, ptr: u.parts[0] && u.parts[0][1][0] };
+                if (r && fixed) { out.push({ ...what, kind: "fixed", at: r }); continue; }
+                const base = r ? moves.filter((_, i) => i !== r - 1) : moves.slice();
+                // position p = removed right after original step p (p >= c); indices shift when step r was taken out
+                const safe = {};
+                for (let p = c; p <= n; p++) {
+                    if (r && p === r) continue; // same as p = r - 1 once step r is gone
+                    const idx = r && p >= r ? p - 1 : p;
+                    const list = [...base.slice(0, idx), { mv: { t: 1, id: u.id, alt: false }, g: 0 }, ...base.slice(idx)];
+                    safe[p] = landsAfter(list);
+                }
+                const stay = landsAfter(base);
+                if (!r) {
+                    let lo = null;
+                    for (let p = n; p >= c && safe[p]; p--) lo = p;
+                    out.push({ ...what, kind: "stay", lo, last: n });
+                } else {
+                    const p0 = r - 1;
+                    let a = p0, b = p0;
+                    while (a - 1 >= c && (a - 1 === r || safe[a - 1])) a--;
+                    while (b + 1 <= n && (b + 1 === r || safe[b + 1])) b++;
+                    if (a === r) a++;
+                    out.push({ ...what, kind: "window", at: r, a, b, stay: stay && b === n });
+                }
+            }
+            return out;
+        };
+        for (const o of options) {
+            try { o.recatch = recatch(o); } catch (e) { o.recatch = []; }
+            try { o.timing = timing(o); } catch (e) { o.timing = []; }
+            delete o.node; delete o.final;
+        }
         return { options, nodes, stopped, ms: Date.now() - t0 };
     }
 
@@ -900,6 +970,37 @@ function runSearch(limits) {
     worker.postMessage({ mode, raw: mode === "dump" ? dump.raw : null, start, address, on, scene, land, limits });
   } catch (err) { out.innerHTML = `<p class="verdict bad">${esc(err.message)}</p>`; }
 };
+// how long each temporary thing has to stay for this option, next to how long it lasts on its own
+const LIFE = {
+  bomb: "explodes 70 frames after you pull it", chu: "explodes 120 frames after you pull it (sooner if it hits something)",
+  explosion: "about 10 frames", seed: "while you hold it; gone about 2 frames after any other action",
+  arrow: "while you hold it; gone about 2 frames after any other action", fireArrow: "while you hold it", iceArrow: "while you hold it", lightArrow: "while you hold it",
+  nut: "until it lands or hits something", flash: "a few frames", boomerang: "until it comes back (roughly 20–40 frames)",
+  hookshot: "while you hold it out", bugs: "digs away after 200–240 frames (random for each bug)", fish: "flops, then dies after a few hundred frames",
+  fairy: "until you catch it or it flies off", blueFire: "burns out after a while", drop: "about 240 frames, then it despawns",
+};
+function timingHTML(o) {
+  const t = o.timing || [];
+  if (!t.length) return "";
+  const need = (x) => {
+    if (x.kind === "fixed") return `goes at step ${x.at}, as listed`;
+    if (x.kind === "stay") return x.lo === null ? `<b>until it lands</b>` : x.lo === x.made ? "can go any time" : `<b>through step ${x.lo}</b>, then it can go`;
+    const before = x.b + 1 > (o.steps.length) ? "before it lands" : `before step ${x.b + 1}`;
+    if (x.stay) return x.a === x.made ? "can go any time" : `<b>through step ${x.a}</b>, then it can go`;
+    return x.a === x.made ? `<b>gone ${before}</b>` : `<b>through step ${x.a}</b>, gone ${before}`;
+  };
+  const NOUN = { bomb: "Bomb", chu: "Bombchu", explosion: "Explosion", seed: "Drawn seed", arrow: "Drawn arrow", nut: "Deku nut", flash: "Nut flash", boomerang: "Boomerang", hookshot: "Hookshot", bugs: "Bug", fish: "Fish", fairy: "Fairy", blueFire: "Blue fire", drop: "Drop" };
+  // a drawn seed or arrow is put away by Link's next action, so it can't be needed past one
+  const HELD = new Set(["seed", "arrow", "fireArrow", "iceArrow", "lightArrow", "hookshot"]);
+  const warn = (x) => {
+    if (!HELD.has(x.key) || x.kind === "fixed" || (x.kind === "stay" && x.lo === x.made)) return "";
+    const until = x.kind === "stay" ? (x.lo === null ? o.steps.length : x.lo) : x.a;
+    const later = o.steps.slice(x.made, until).findIndex((s) => !s.removal);
+    return later < 0 ? "" : `<br><span class="warn">Step ${x.made + later + 1} makes Link put it away; use an order where it comes later.</span>`;
+  };
+  const rows = t.map((x) => `<tr><td>${esc(NOUN[x.key] || x.label)} <span class="muted">(step ${x.made}${x.key === "bugs" ? `, at <span class="addr">${hex(x.ptr)}</span>` : ""})</span></td><td>${need(x)}${warn(x)}</td><td class="muted">${esc(LIFE[x.key] || (/^(zelda|saria|epona|sun|time|storms)$/.test(x.key) ? "the song's effect, a couple of seconds" : "its effect ends on its own"))}</td></tr>`).join("");
+  return `<details class="life"><summary>How long each thing has to stay</summary><table><tr><th>Thing (made at)</th><th>Has to stay</th><th>On its own (approx.)</th></tr>${rows}</table><p class="muted">"Through step N" means it can go any time after step N without moving where the thing lands. The page doesn't check frame timing; compare with the last column.</p></details>`;
+}
 // when a released bug, fish or fairy can be caught back without changing where the thing lands
 function recatchHTML(o) {
   const lines = (o.recatch || []).map((c) => {
@@ -926,6 +1027,7 @@ function show(r, address, limits) {
         ${o.steps.length ? stepsHTML(o.steps) : ""}
         <p>Then <b>${esc(o.land.label)}</b> <span class="muted">→ ${o.land.made.length > 4 ? `${o.land.made.length} actors from <span class="addr">${hex(o.land.made[0].inst)}</span>` : o.land.made.map(line).join("; ")}</span></p>
         <p class="muted">${esc(o.land.what)} lands at ${where}.${o.orders > 1 ? ` The same steps also work in ${o.orders - 1} other order${o.orders > 2 ? "s" : ""} (the heap below can differ).` : ""}</p>
+        ${timingHTML(o)}
         ${recatchHTML(o)}
         <details data-i="${i}"><summary>Heap after</summary></details></div>`;
     }).join("") +
