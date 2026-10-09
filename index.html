@@ -150,7 +150,7 @@ ol { padding-left: 22px; margin: 6px 0; } li { margin: 4px 0; }
       <div><b>Not modeled</b><ul>
         <li>Timing. Things that go away on their own (bombs, nuts, the boomerang, drops) stay until a step says they go.</li>
         <li>Anything else in the scene allocating or freeing meanwhile (enemies, timers, room changes).</li>
-        <li>Enemy drops and death effects when one is killed.</li>
+        <li>Enemy drops and death effects when one is killed, except a Deku Baba's Deku nut (as on a sword kill).</li>
         <li>Sizes are the simulator's NTSC 1.2 export; other versions differ.</li>
       </ul></div>
     </div>
@@ -323,6 +323,11 @@ const Fill = (function () {
                     else scene.push({ ...base, verb: "Cut the bush", parts: [...sd.parts, ...bugs], text: (sd.parts.length ? `${sd.text} or ${hd.text}` : "nothing") + (bugs.length ? ", plus 3 bugs" : ""), kill: false });
                 } else scene.push({ ...base, verb: "Cut the bush", skip: "its drop is random" });
             } else if (x.name === "En_Item00") scene.push({ ...base, verb: "Collect the item", parts: [], text: "", kill: true });
+            else if (x.name === "En_Dekubaba") {
+                // EnDekubaba_ShrinkDie: Item_DropCollectible(ITEM00_NUTS), three for a big one, then Actor_Kill
+                const c = convert(0x0c), nuts = c < 0 ? [] : Array((p & 0xff) === 1 ? 3 : 1).fill(["En_Item00"]);
+                scene.push({ ...base, verb: "Kill the Deku Baba", parts: nuts, text: nuts.length > 1 ? "3 Deku nuts" : "a Deku nut", kill: true, note: "a sword kill; a hit that sets its drop flag drops at random instead" });
+            }
             else if (x.cat === 5) scene.push({ ...base, verb: `Kill the ${x.name}`, parts: [], text: "", kill: true, note: "ignores its drop and death effects" });
         }
         return { blocks, actors, ovl, save, scene, absolute, bottles, format: off ? "Dolphin Wii VC MEM1" : "raw RDRAM", script: u32(ADDR.script) };

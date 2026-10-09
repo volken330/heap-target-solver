@@ -17,7 +17,7 @@ Give an address and what should land there, and the page lists every way it find
   It shows the heap, and offers the things already in the scene that Link can make go away:
   - **Pots and crates:** break them. Their fixed drop is worked out the way `Item_DropCollectible` does it.
   - **Bushes:** cut type-1 ones. Bushes with random drops are listed but not used.
-  - **Enemies:** kill them. The page ignores their drops and death effects.
+  - **Enemies:** kill them. A Deku Baba drops its Deku nut (three for a big one), as on a sword kill. Other enemies' drops and death effects are ignored.
   - **Items on the ground:** collect them.
 - **Option 2: where free memory starts.** The solver can only add actors Link makes himself. Free memory is taken to start there and continue upward, with no item code loaded. You pick child or adult.
 
