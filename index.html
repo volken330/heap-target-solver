@@ -137,17 +137,8 @@ ol.auto { list-style: none; padding-left: 14px; margin: 2px 0; font-size: 13px; 
     <div class="one" id="landOther" hidden><label class="l" for="landActor">Actor name</label><input id="landActor" list="actorNames" placeholder="En_Item00" autocomplete="off"><datalist id="actorNames"></datalist></div>
     <div class="status" id="landNote">It counts if the thing itself, its code or one of its tables starts at the address.</div>
     <div id="highOpts" hidden>
-      <div class="pair" style="margin-top:12px">
-        <div><label class="l" for="measure">Measure</label><select id="measure">
-          <option value="first">The thing itself (the first actor it spawns)</option>
-          <option value="highest">The highest of the actors it spawns</option>
-          <option value="code">Its code (only if it isn't loaded yet)</option>
-        </select></div>
-        <div><label class="l" for="stepUpdates">Each step takes (updates)</label><input id="stepUpdates" value="20" inputmode="numeric" autocomplete="off"></div>
-        <div><label class="l" for="slack">Allow for being late by (updates)</label><input id="slack" value="5" inputmode="numeric" autocomplete="off"></div>
-        <div><label class="l" for="maxStepsC">At most (steps)</label><input id="maxStepsC" value="30" inputmode="numeric" autocomplete="off"></div>
-      </div>
-      <div class="status">A step is one thing Link does: make something, catch something back, break something. Bottles and songs take longer in practice; songs add their playback on top. "Late" means the result must hold if the thing lands up to that many updates after the time listed.</div>
+      <div class="one"><label class="l" for="maxStepsC">At most (steps)</label><input id="maxStepsC" value="30" inputmode="numeric" autocomplete="off"></div>
+      <div class="status">A step is one thing Link does: make something, catch something back, break something.</div>
     </div>
   </section>
 
@@ -833,7 +824,8 @@ const Fill = (function () {
     // climb() finds the steps that put the chosen thing as high in the heap as it can, instead of at one address.
     // Unlike solve(), it keeps a clock in game updates. Everything Link makes has a lifetime from the decomp (the same
     // numbers the heap simulator's steps use, OcarinaOfTimeHeapSimulator/rules.js), so things go away on their own and
-    // a setup can't pile actors up forever. Each of Link's actions takes opts.stepUpdates updates.
+    // a setup can't pile actors up forever. Each of Link's actions takes opts.stepUpdates updates (default 20).
+    // What's measured is the first actor the chosen thing spawns.
 
     // Timed versions of what Link can make, by action key; a list when it can go more than one way. Each segment is
     // a set of actors that appear `at` updates after the action (default 0) and go away `life` updates after they
@@ -927,11 +919,10 @@ const Fill = (function () {
         segs: s.parts.map((p) => ({ parts: [p], life: DROP_LIFE[p[0]] ?? null, collect: p[0] in DROP_LIFE })),
     });
 
-    // opts: { land, on, useScene, measure: "first" | "highest" | "code", stepUpdates, slack, maxSteps, beam, maxMs, maxOptions }
+    // opts: { land, on, useScene, stepUpdates, slack, maxSteps, beam, maxMs, maxOptions }
     function climb(dump, opts) {
         const L = landDef(opts.land, dump);
         const D = Math.max(1, Math.round(opts.stepUpdates || 20));
-        const measure = opts.measure || "first";
         const variants = [];
         for (const a of ACTIONS) if (opts.on[a.key]) variants.push(...timedVariants(a.key));
         const { groups } = sceneGroups(dump, opts, L);
@@ -972,11 +963,11 @@ const Fill = (function () {
         };
         // A bottle bug can be caught until it starts digging (its last 60 updates).
         const catchableBug = (st, l) => l.bug && l.catchable && st.t < l.die - BUG_DIG;
-        // Do what a variant does: segments at 0 spawn now, later ones are queued. sink collects what spawns now,
-        // and also what spawns later if `later` (the measured thing); a step lists later spawns on their own.
-        const make = (st, v, sink, later = false) => {
+        // Do what a variant does: segments at 0 spawn now, later ones are queued. sink collects what spawns now
+        // (a step lists later spawns on their own).
+        const make = (st, v, sink) => {
             for (const seg of v.segs) {
-                if (seg.at) { st.pend.push({ at: st.t + seg.at, v, seg, sink: later ? sink : null, step: st.step }); continue; }
+                if (seg.at) { st.pend.push({ at: st.t + seg.at, v, seg, step: st.step }); continue; }
                 const m = spawnSeg(st, v, seg);
                 if (!m) return false;
                 if (sink) sink.push(...m);
@@ -1020,7 +1011,6 @@ const Fill = (function () {
                     const m = spawnSeg(st, p.v, p.seg);
                     st.step = keep;
                     if (!m) return false;
-                    if (p.sink) p.sink.push(...m);
                     if (log) log.push({ t: next, label: `${cap(APPEARS[p.v.key] || "more of it appears")} (from step ${p.step})`, made: m, freed: [] });
                 }
             }
@@ -1131,21 +1121,15 @@ const Fill = (function () {
             const s2 = cloneC(st);
             s2.step = "land"; s2.k = 0;
             const made = [];
-            if (!make(s2, LV, made, true)) return null;
-            // the highest of its actors may be one that appears later (blue fire's flames)
-            const lastAt = Math.max(0, ...LV.segs.map((g) => g.at || 0));
-            if (lastAt && measure === "highest" && !advance(s2, s2.t + lastAt, null)) return null;
+            if (!make(s2, LV, made)) return null;
             if (LV.scene && LV.scene.kill) deletePart(s2, LV.scene.x.name, [LV.scene.x.inst]);
-            let addr = null, what = null;
-            if (measure === "code") { const m = made.find((x) => x.code); if (m) { addr = m.code; what = m.codeWhat; } }
-            else if (measure === "highest") { for (const m of made) if (addr === null || m.inst > addr) { addr = m.inst; what = m.name; } }
-            else if (made.length) { addr = made[0].inst; what = made[0].name; }
-            return addr === null ? null : { addr, what, made, st: s2 };
+            // measured: the first actor it spawns
+            return made.length ? { addr: made[0].inst, what: made[0].name, made, st: s2 } : null;
         };
-        // Where it lands if Link is up to `slack` updates late: the lowest landing over that window. The heap only
+        // Where it lands if Link is up to `slack` updates late (default 5): the lowest landing over that window. The heap only
         // changes when something goes or appears, so it's enough to try again after each of those moments.
         // Returns the landing at the listed time with that lowest address as `low`, or null if any moment fails.
-        const slack = Math.max(0, Math.round(opts.slack || 0));
+        const slack = Math.max(0, Math.round(opts.slack ?? 5));
         const scoreC = (st, first) => {
             if (!first || !legal(st)) return null;
             let low = first.addr;
@@ -1291,8 +1275,8 @@ const Fill = (function () {
         let best = baseline ? baseline.low : 0;
         const byLength = [];
         for (const x of lengths) if (x.addr > best) { best = x.addr; byLength.push(x); }
-        const reason = !variants.length && !groups.length ? "Nothing is ticked for Link to use." : measure === "code" && !found.size && !baseline ? "Its code is already loaded, so there's no code to measure." : null;
-        return { climb: true, options, baseline: baseline ? { addr: baseline.low, exact: baseline.addr, what: baseline.what, blocks: baseline.st.B } : null, byLength, nodes, rounds, stopped, ms: Date.now() - t0, stepUpdates: D, slack, measure, reason };
+        const reason = !variants.length && !groups.length ? "Nothing is ticked for Link to use." : null;
+        return { climb: true, options, baseline: baseline ? { addr: baseline.low, exact: baseline.addr, what: baseline.what, blocks: baseline.st.B } : null, byLength, nodes, rounds, stopped, ms: Date.now() - t0, stepUpdates: D, slack, reason };
     }
 
 
@@ -1479,7 +1463,7 @@ function runSearch(limits) {
       if (!Number.isInteger(v) || v < lo || v > hi) throw new Error(`${name} must be a whole number from ${lo} to ${hi}.`);
       return v;
     };
-    const climbOpts = high ? { measure: $("measure").value, stepUpdates: num("stepUpdates", "How long each step takes", 1, 1000), slack: num("slack", "How late it may land", 0, 200), maxSteps: num("maxStepsC", "The most steps", 1, 80) } : null;
+    const climbOpts = high ? { maxSteps: num("maxStepsC", "The most steps", 1, 80) } : null;
     const land = landChoice();
     if (!land) throw new Error($("land").value === "@actor" ? "That isn't an actor name the page knows (for example En_Item00)." : "Choose what will land there.");
     const on = {};
@@ -1614,7 +1598,7 @@ function showClimb(r, limits) {
   const curve = r.byLength.length > 1 ? `<p class="muted">Highest by number of steps: ${r.byLength.map((x) => `${n(x.steps)}: <span class="addr">${hex(x.addr)}</span>`).join(" · ")}.</p>` : "";
   const stop = r.stopped === "time" ? " The search ran out of time, so a better setup may exist." : "";
   out.innerHTML = `<p class="verdict ok">Highest found: <span class="addr">${hex(top.addr)}</span>, in ${n(top.steps.length)}${late}.</p>
-    <p class="muted">${base} Each step takes ${r.stepUpdates} updates (a song adds its playback).${stop}</p>${curve}${longer}` +
+    <p class="muted">${base} The search assumes each step takes ${r.stepUpdates} updates (a song adds its playback).${stop}</p>${curve}${longer}` +
     r.options.map((o, i) => `<div class="opt"><h3>Option ${i + 1} · <span class="addr">${hex(o.addr)}</span> · ${n(o.steps.length)}</h3>
         ${climbStepsHTML(o.steps)}
         <p>Then, at update ${o.t}, <b>${esc(o.land.label)}</b> <span class="muted">→ ${o.land.made.length > 4 ? `${o.land.made.length} actors from <span class="addr">${hex(o.land.made[0].inst)}</span>` : o.land.made.map(line).join("; ")}</span></p>
