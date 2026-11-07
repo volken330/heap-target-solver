@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Heap Target Solver</title>
-<meta name="description" content="OoT NTSC 1.2: every way to make something land at a heap address.">
+<meta name="description" content="OoT NTSC 1.2: every way to make something land at a heap address, or as high in the heap as it can go.">
 <style>
 :root { color-scheme: light dark; --bg:#fff; --ink:#111; --muted:#666; --line:#ccc; --field:#fff; --ok:#1a7f37; --bad:#c62828;
   --free:#eee; --actor:#6b8fb5; --code:#9a84b8; --other:#aaa; --new:#e0a050; --target:#d32f2f;
@@ -82,6 +82,9 @@ ol { padding-left: 22px; margin: 6px 0; } li { margin: 4px 0; }
 .choice { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; font-size: 14px; }
 .choice small { display: block; color: var(--muted); font-size: 12.5px; }
 .warn { color: var(--bad); font-size: 12px; }
+.bottles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-width: 520px; }
+@media (max-width: 520px) { .bottles { grid-template-columns: 1fr 1fr; } }
+ol.auto { list-style: none; padding-left: 14px; margin: 2px 0; font-size: 13px; color: var(--muted); }
 .life table { font: 13px var(--sans); margin-top: 4px; } .life td, .life th { white-space: normal; vertical-align: top; }
 [hidden] { display: none !important; }
 </style>
@@ -89,7 +92,7 @@ ol { padding-left: 22px; margin: 6px 0; } li { margin: 4px 0; }
 <body>
 <main>
   <h1>Heap target solver</h1>
-  <p class="sub">Finds every way it can to fill Ocarina of Time's actor heap so that what you choose lands at the address you choose. NTSC 1.2 only.</p>
+  <p class="sub">Finds every way it can to fill Ocarina of Time's actor heap so that what you choose lands at the address you choose, or as high in the heap as it can go. NTSC 1.2 only.</p>
 
 
   <section class="step">
@@ -115,17 +118,37 @@ ol { padding-left: 22px; margin: 6px 0; } li { margin: 4px 0; }
         <div><label class="l" for="startAddr">Free memory starts at</label><input id="startAddr" placeholder="801F67E0" autocomplete="off"></div>
         <div><label class="l">Link is</label><div class="seg"><label><input type="radio" name="age" value="child" checked> Child</label><label><input type="radio" name="age" value="adult"> Adult</label></div></div>
       </div>
+      <label class="l" style="margin-top:12px">Bottles</label>
+      <div class="bottles" id="bottles"></div>
+      <div class="status">A ticked bottle item with no bottle of it here still gets one bottle.</div>
     </div>
   </section>
 
   <section class="step">
     <h2><span class="n">2</span>End point</h2>
+    <div class="choices" role="radiogroup" aria-label="Goal">
+      <label class="choice"><input type="radio" name="goal" value="addr" checked><span><b>Land at an address</b><small>Every way to fill the heap so the thing lands exactly there.</small></span></label>
+      <label class="choice"><input type="radio" name="goal" value="high"><span><b>Land as high as possible</b><small>The steps that push the thing furthest up the heap. This search keeps time: what Link makes goes away on its own, as in the game.</small></span></label>
+    </div>
     <div class="pair">
-      <div><label class="l" for="addr">Fill the heap up to</label><input id="addr" placeholder="801F8550" autocomplete="off"></div>
-      <div><label class="l" for="land">What will land there</label><select id="land"></select></div>
+      <div id="addrBox"><label class="l" for="addr">Fill the heap up to</label><input id="addr" placeholder="801F8550" autocomplete="off"></div>
+      <div><label class="l" for="land" id="landLabel">What will land there</label><select id="land"></select></div>
     </div>
     <div class="one" id="landOther" hidden><label class="l" for="landActor">Actor name</label><input id="landActor" list="actorNames" placeholder="En_Item00" autocomplete="off"><datalist id="actorNames"></datalist></div>
     <div class="status" id="landNote">It counts if the thing itself, its code or one of its tables starts at the address.</div>
+    <div id="highOpts" hidden>
+      <div class="pair" style="margin-top:12px">
+        <div><label class="l" for="measure">Measure</label><select id="measure">
+          <option value="first">The thing itself (the first actor it spawns)</option>
+          <option value="highest">The highest of the actors it spawns</option>
+          <option value="code">Its code (only if it isn't loaded yet)</option>
+        </select></div>
+        <div><label class="l" for="stepUpdates">Each step takes (updates)</label><input id="stepUpdates" value="20" inputmode="numeric" autocomplete="off"></div>
+        <div><label class="l" for="slack">Allow for being late by (updates)</label><input id="slack" value="5" inputmode="numeric" autocomplete="off"></div>
+        <div><label class="l" for="maxStepsC">At most (steps)</label><input id="maxStepsC" value="30" inputmode="numeric" autocomplete="off"></div>
+      </div>
+      <div class="status">A step is one thing Link does: make something, catch something back, break something. Bottles and songs take longer in practice; songs add their playback on top. "Late" means the result must hold if the thing lands up to that many updates after the time listed.</div>
+    </div>
   </section>
 
   <section class="step">
@@ -150,7 +173,7 @@ ol { padding-left: 22px; margin: 6px 0; } li { margin: 4px 0; }
         <li>Catching a bottle bug always takes the oldest one out, and needs an empty bottle.</li>
       </ul></div>
       <div><b>Not modeled</b><ul>
-        <li>Timing. Things that go away on their own (bombs, nuts, the boomerang, drops) stay until a step says they go.</li>
+        <li>Timing, for "Land at an address". Things that go away on their own (bombs, nuts, the boomerang, drops) stay until a step says they go. "As high as possible" does keep time, with lifetimes from the decomp, but Link's own pace is one number you set.</li>
         <li>Anything else in the scene allocating or freeing meanwhile (enemies, timers, room changes).</li>
         <li>Enemy drops and death effects when one is killed, except a Deku Baba's Deku nut (as on a sword kill).</li>
         <li>Sizes are the simulator's NTSC 1.2 export; other versions differ.</li>
@@ -487,21 +510,34 @@ const Fill = (function () {
         }
         return null;
     }
-    // Lists every distinct way it finds to make the chosen thing land exactly at X, fewest steps first.
-    function solve(dump, opts) {
-        const X = opts.address;
-        if (X % 16) return { options: [], reason: `Allocations start on 16-byte boundaries, so ${hex(X)} can never be one. Try ${hex(X - (X % 16))} or ${hex(X - (X % 16) + 16)}.` };
-        const L = landDef(opts.land, dump);
-        const acts = ACTIONS.filter((a) => opts.on[a.key]);
+    // The scene things the search may use (ticked, and not the thing that lands), grouped: things that change the heap
+    // the same way (bushes with the same drop that stay put) are interchangeable, so the search uses the first one
+    // left in a group and lists the others as alternatives. Shared by solve() and climb().
+    function sceneGroups(dump, opts, L) {
         const scene = (dump.scene || []).filter((s) => !s.skip && (!opts.useScene || opts.useScene(s)) && !(L.scene && s.id === L.scene.id));
-        // Things in the scene that change the heap the same way (bushes with the same drop that stay put) are
-        // interchangeable: the search uses the first one left and lists the others as alternatives.
         const groups = [], gi = new Map();
         for (const s of scene) {
             const sig = s.kill ? s.id : `${s.verb}|${JSON.stringify(s.parts)}|${s.text}`;
             if (!gi.has(sig)) { gi.set(sig, groups.length); groups.push([]); }
             groups[gi.get(sig)].push(s);
         }
+        return { scene, groups };
+    }
+    // Bottles at the start: a count of each content, plus empty ones. Shared by solve() and climb().
+    function startBottles(dump, opts) {
+        const bottles = { empty: 0 };
+        if (dump.bottles) for (const b of dump.bottles) { if (b === 0x14) bottles.empty++; else if (b !== 0xff) bottles[b] = (bottles[b] || 0) + 1; }
+        // inventory isn't checked: a ticked bottle item gets a bottle of it if the save has none
+        for (const a of ACTIONS) if (a.bottle && (opts.on[a.key] || (opts.land && opts.land.key === a.key)) && !(bottles[a.bottle] > 0)) bottles[a.bottle] = 1;
+        return bottles;
+    }
+    // Lists every distinct way it finds to make the chosen thing land exactly at X, fewest steps first.
+    function solve(dump, opts) {
+        const X = opts.address;
+        if (X % 16) return { options: [], reason: `Allocations start on 16-byte boundaries, so ${hex(X)} can never be one. Try ${hex(X - (X % 16))} or ${hex(X - (X % 16) + 16)}.` };
+        const L = landDef(opts.land, dump);
+        const acts = ACTIONS.filter((a) => opts.on[a.key]);
+        const { scene, groups } = sceneGroups(dump, opts, L);
         const sizeOf = (parts) => parts.reduce((t, [n, ex = []]) => { const A = actor(n); return t + al16(A.instance) + NODE + ex.reduce((u, e) => u + al16(e) + NODE, 0) + (A.alloc === 0 ? al16(A.overlay) + NODE : 0); }, 0);
         const maxBytes = Math.max(1, ...acts.map((a) => sizeOf(a.parts)), ...scene.map((s) => sizeOf(s.parts)), sizeOf([["En_Bom"]]), sizeOf([["En_M_Fire1"]]));
         const need = (st) => {
@@ -509,11 +545,7 @@ const Fill = (function () {
             return -1;
         };
         const coverable = (st) => st.live.length > 0 || scene.some((s) => s.kill && !st.used.has(s.id));
-        // bottles: count of each content, plus empty ones
-        const bottles = { empty: 0 };
-        if (dump.bottles) for (const b of dump.bottles) { if (b === 0x14) bottles.empty++; else if (b !== 0xff) bottles[b] = (bottles[b] || 0) + 1; }
-        // inventory isn't checked: a ticked bottle item gets a bottle of it if the save has none
-        for (const a of ACTIONS) if (a.bottle && (opts.on[a.key] || (opts.land && opts.land.key === a.key)) && !(bottles[a.bottle] > 0)) bottles[a.bottle] = 1;
+        const bottles = startBottles(dump, opts);
         const start = { B: dump.blocks.map((b) => ({ ...b })), ovl: { ...dump.ovl }, abs: dump.absolute, live: [], bottles, used: new Set(), seq: 0 };
         if (need(start) < 0 && !coverable(start)) return { options: [], reason: `${hex(X)} isn't in free memory, and nothing allowed here can free it.` };
 
@@ -797,8 +829,474 @@ const Fill = (function () {
         return { options, nodes, stopped, ms: Date.now() - t0 };
     }
 
+    // ================= As high as possible =================
+    // climb() finds the steps that put the chosen thing as high in the heap as it can, instead of at one address.
+    // Unlike solve(), it keeps a clock in game updates. Everything Link makes has a lifetime from the decomp (the same
+    // numbers the heap simulator's steps use, OcarinaOfTimeHeapSimulator/rules.js), so things go away on their own and
+    // a setup can't pile actors up forever. Each of Link's actions takes opts.stepUpdates updates.
 
-    return { fromDump, fromAddress, solve, ACTIONS, actor, hex, ID, NODE, al16, ADDR, cap };
+    // Timed versions of what Link can make, by action key; a list when it can go more than one way. Each segment is
+    // a set of actors that appear `at` updates after the action (default 0) and go away `life` updates after they
+    // appear (null: they stay until a step removes them). each: every actor of the segment is its own thing (bugs).
+    // then: what going away spawns. fire / away: updates a held item lasts once fired / put away. extra: more
+    // updates the action takes (playing the song, charging the spin). single: only one out at a time.
+    const several = (name, n) => Array(n).fill([name]);
+    const BUG_DIG = 61; // z_en_insect.c:430 EnInsect_SetupDig: actionTimer 60, Actor_Kill when it runs out
+    const TIMED = {
+        // z_en_bom.c:239-330: fuse 70 updates, explodes for 10 more, freed on the pass after (rules.js takeOutItem)
+        bomb: [{ segs: [{ parts: [["En_Bom"]], life: 81 }] }],
+        // z_en_bom_chu.c:107 timer 120; exploding spawns En_Bom first, then the chu goes (rules.js chuExplodes)
+        chu: [{ segs: [{ parts: [["En_Bom_Chu"]], life: 121, then: "explosion" }], early: true }],
+        // the bombchu's explosion: En_Bom for 10 updates (rules.js chuExplodes)
+        explosion: [{ segs: [{ parts: [["En_Bom"]], life: 11 }] }],
+        // drawn seed or arrow: stays while held; fired and missing, it is killed on its 17th (seed) or 14th (arrow)
+        // update; put away, 2 updates later (z_en_arrow.c, rules.js shootArrow)
+        seed: [{ segs: [{ parts: [["En_Arrow"]], life: null }], fire: 17 }],
+        arrow: [{ segs: [{ parts: [["En_Arrow", [0x1e, 0x1e]]], life: null }], fire: 14 }],
+        fireArrow: [{ segs: [{ parts: [["En_Arrow", [0x1e, 0x1e]], ["Arrow_Fire"]], life: null }], fire: 14 }],
+        iceArrow: [{ segs: [{ parts: [["En_Arrow", [0x1e, 0x1e]], ["Arrow_Ice"]], life: null }], fire: 14 }],
+        lightArrow: [{ segs: [{ parts: [["En_Arrow", [0x1e, 0x1e]], ["Arrow_Light"]], life: null }], fire: 14 }],
+        // z_en_arrow.c:246-266: a nut that hits nothing is killed after its 15 updates of flight; one that lands 2
+        // updates out spawns En_M_Fire1 (gone after 5 updates) and goes the update after (rules.js throwNut)
+        nut: [
+            { segs: [{ parts: [["En_Arrow"]], life: 17 }], suffix: " (it hits nothing)" },
+            { segs: [{ parts: [["En_Arrow"]], life: 5 }, { at: 4, parts: [["En_M_Fire1"]], life: 6 }], suffix: " (it hits the ground)" },
+        ],
+        // z_en_boom.c: about 20 updates out and 20 back (rules.js throwBoomerang)
+        boomerang: [{ segs: [{ parts: [["En_Boom"]], life: 41 }], single: true }],
+        // Player_DestroyHookshot: putting it away (or using anything else) kills it on the spot
+        hookshot: [{ segs: [{ parts: [["Arms_Hook"]], life: null }], away: 1 }],
+        // z_en_insect.c:221 lifeTimer Rand_S16Offset(200, 40), then 60 updates digging: 261 is the shortest case.
+        // With 4 or more bottle bugs out they all dig at once (z_en_insect.c:294-297); see digRule below.
+        bugs: [{ segs: [{ parts: several("En_Insect", 3), life: 200 + BUG_DIG, each: true }], bug: true, catchable: true }],
+        // z_en_fish.c:376-497: falls 8 updates, then flops 400 on the ground (rules.js releaseFromBottle)
+        fish: [{ segs: [{ parts: [["En_Fish"]], life: 410 }], catchable: true }],
+        // z_en_elf.c:708-747: the bottle fairy rises, sinks and vanishes after about 87-137 updates (rules.js uses 110)
+        fairy: [{ segs: [{ parts: [["En_Elf"]], life: 111 }] }],
+        // z_en_ice_hono.c:242-350: falls 8 updates; on landing 8 small flames (44 updates each), 14 updates later 10
+        // more, and the fire itself goes 60 updates after landing (rules.js releaseFromBottle)
+        blueFire: [{ segs: [{ parts: [["En_Ice_Hono"]], life: 70 }, { at: 9, parts: several("En_Ice_Hono", 8), life: 45 }, { at: 23, parts: several("En_Ice_Hono", 10), life: 45 }] }],
+        // rules.js castSpell: Din's Fire 92 updates, Nayru's Love 1257, Farore's Wind 152
+        dins: [{ segs: [{ parts: [["Magic_Fire"]], life: 93 }] }],
+        nayrus: [{ segs: [{ parts: [["Magic_Dark"]], life: 1258 }] }],
+        farores: [{ segs: [{ parts: [["Magic_Wind", [0x36]]], life: 153 }] }],
+        // z_en_m_thunder.c (rules.js spinAttackMagic): a quick spin is killed on its 16th update. Charged for 45
+        // updates: Eff_Dust appears after 8 updates of charge, and the spin ends 54 updates after that.
+        spin: [{ segs: [{ parts: [["En_M_Thunder"]], life: 17 }] }],
+        chargedSpin: [{ segs: [{ parts: [["En_M_Thunder"]], life: 63 }, { at: 9, parts: [["Eff_Dust"]], life: 49 }], extra: 45 }],
+        // z_oceff_wipe.c:62: the song effect counts to 100 updates, then goes. extra is how long the song plays back
+        // (rules.js playSong replay); Epona's Song and the Sun's Song aren't in that table, so 100 is a guess.
+        zelda: [{ segs: [{ parts: [["Oceff_Wipe"]], life: 102 }], extra: 110 }],
+        saria: [{ segs: [{ parts: [["Oceff_Wipe3"]], life: 102 }], extra: 80 }],
+        epona: [{ segs: [{ parts: [["Oceff_Wipe2"]], life: 102 }], extra: 100 }],
+        sun: [{ segs: [{ parts: [["Oceff_Spot"]], life: 102 }], extra: 100 }],
+        time: [{ segs: [{ parts: [["Oceff_Wipe"]], life: 102 }], extra: 109 }],
+        // z_en_okarina_effect.c:78: the storm itself lasts 400 updates
+        storms: [{ segs: [{ parts: [["Oceff_Storm"]], life: 102 }, { parts: [["En_Okarina_Effect"]], life: 401 }], extra: 60 }],
+    };
+    // How each timed thing goes away on its own, for the step list.
+    const GONE = {
+        bomb: "the bomb explodes and is gone", chu: "the bombchu explodes", explosion: "the explosion ends", seed: "the seed is gone",
+        arrow: "the arrow is gone", fireArrow: "the fire arrow is gone", iceArrow: "the ice arrow is gone", lightArrow: "the light arrow is gone",
+        nut: "the Deku nut is gone", boomerang: "the boomerang comes back", hookshot: "the hookshot is put away", bugs: "a bug digs away",
+        fish: "the fish dies", fairy: "the fairy vanishes", blueFire: "blue flames burn out", dins: "Din's Fire ends", nayrus: "Nayru's Love ends",
+        farores: "the Farore's Wind effect ends", spin: "the spin ends", chargedSpin: "the spin ends", drop: "the drop is gone", land: "it goes",
+        zelda: "the song effect ends", saria: "the song effect ends", epona: "the song effect ends", sun: "the song effect ends", time: "the song effect ends",
+        storms: "part of the Song of Storms effect ends",
+    };
+    // What a delayed segment is, for the step list.
+    const APPEARS = { nut: "the nut's flash appears", blueFire: "more blue flames appear", chargedSpin: "the spin's dust appears" };
+    const ACT = new Map(ACTIONS.map((a) => [a.key, a]));
+    const timedCache = new Map();
+    // The timed ways one of Link's actions (or the bombchu's explosion) can go, with its rules from ACTIONS.
+    function timedVariants(key) {
+        if (timedCache.has(key)) return timedCache.get(key);
+        const a = ACT.get(key) || (key === "explosion" ? { key, label: "Explosion", group: "Explosives", explosive: true } : null);
+        const list = TIMED[key];
+        if (!a || !list) throw new Error(`There's no timed model for ${key}.`);
+        const out = list.map((t, i) => ({ ...t, key, vkey: `${key}.${i}`, label: a.label + (t.suffix || ""), group: a.group, explosive: !!a.explosive, held: !!a.held, bottle: a.bottle || null }));
+        timedCache.set(key, out);
+        return out;
+    }
+    // A drop from the scene, timed: each actor is its own thing. A dropped item despawns after its 220-update timer
+    // (z_en_item00.c:1222, plus its fall) and can be collected; a dropped fairy flies off after about 250 updates
+    // (rules.js). Anything else (a crate's Skulltula, a bush's bugs) stays.
+    const DROP_LIFE = { En_Item00: 240, En_Elf: 251 };
+    const dropVariant = (s, key = "drop") => ({
+        key, vkey: `${key}:${s.id}`, label: s.parts[0] && s.parts[0][0] === "En_Sw" ? "Skulltula and drop" : "Drop",
+        segs: s.parts.map((p) => ({ parts: [p], life: DROP_LIFE[p[0]] ?? null, collect: p[0] in DROP_LIFE })),
+    });
+
+    // opts: { land, on, useScene, measure: "first" | "highest" | "code", stepUpdates, slack, maxSteps, beam, maxMs, maxOptions }
+    function climb(dump, opts) {
+        const L = landDef(opts.land, dump);
+        const D = Math.max(1, Math.round(opts.stepUpdates || 20));
+        const measure = opts.measure || "first";
+        const variants = [];
+        for (const a of ACTIONS) if (opts.on[a.key]) variants.push(...timedVariants(a.key));
+        const { groups } = sceneGroups(dump, opts, L);
+        // What gets measured: one of Link's actions spawns its first (default) way; a scene drop or a named actor as is.
+        const LV = L.scene ? { ...dropVariant(L.scene, "land"), label: L.label, scene: L.scene }
+            : L.byName ? { key: "land", vkey: "land", label: L.label, segs: [{ parts: L.parts, life: null }] }
+            : timedVariants(L.key)[0];
+        // st: { B blocks, ovl code refcounts, abs, live things, pend delayed segments, bottles, used scene ids,
+        //       t clock in updates, step number (or "land") and k, a counter naming the things a step makes }
+        const start = { B: dump.blocks.map((b) => ({ ...b })), ovl: { ...dump.ovl }, abs: dump.absolute, live: [], pend: [], bottles: startBottles(dump, opts), used: new Set(), t: 0, step: 0, k: 0 };
+        const cloneC = (st) => ({ ...st, B: st.B.slice(), ovl: { ...st.ovl }, live: st.live.slice(), pend: st.pend.slice(), bottles: { ...st.bottles } });
+        const replace = (st, uref, patch) => { st.live = st.live.map((l) => (l.uref === uref ? { ...l, ...patch } : l)); };
+
+        // Spawn one segment now. Each thing gets a uref "<step>:<n>" so later steps can name it.
+        const spawnSeg = (st, v, seg) => {
+            const made = [];
+            for (const [name, ex] of seg.parts) {
+                const r = spawnPart(st, name, ex, st.step);
+                if (!r) return null;
+                made.push(r);
+            }
+            const unit = (ms) => ({
+                uref: `${st.step}:${++st.k}`, key: v.key, vkey: v.vkey, label: v.label, step: st.step, born: st.t,
+                parts: ms.map((m) => [m.name, m.ptrs]), die: seg.life == null ? Infinity : st.t + seg.life, then: seg.then || null,
+                explosive: v.explosive, held: v.held, bug: !!v.bug, catchable: !!v.catchable, collect: !!seg.collect,
+                early: !!v.early, fire: v.fire || 0, away: v.away || 2,
+            });
+            if (seg.each) for (const m of made) st.live.push(unit([m]));
+            else if (made.length) st.live.push(unit(made));
+            return made;
+        };
+        // z_en_insect.c:294-297 (and :339-342, :526-528, :708-710): while 4 or more bottle bugs are out (sDroppedCount,
+        // counted in Init, dropped in Destroy), every bottle bug on the ground starts digging and is gone 60 updates
+        // later; a digging bug can't be caught (INSECT_FLAG_UNCATCHABLE).
+        const digRule = (st) => {
+            if (st.live.filter((l) => l.bug).length < 4) return;
+            st.live = st.live.map((l) => (l.bug && (l.catchable || l.die > st.t + BUG_DIG) ? { ...l, catchable: false, die: Math.min(l.die, st.t + BUG_DIG) } : l));
+        };
+        // A bottle bug can be caught until it starts digging (its last 60 updates).
+        const catchableBug = (st, l) => l.bug && l.catchable && st.t < l.die - BUG_DIG;
+        // Do what a variant does: segments at 0 spawn now, later ones are queued. sink collects what spawns now,
+        // and also what spawns later if `later` (the measured thing); a step lists later spawns on their own.
+        const make = (st, v, sink, later = false) => {
+            for (const seg of v.segs) {
+                if (seg.at) { st.pend.push({ at: st.t + seg.at, v, seg, sink: later ? sink : null, step: st.step }); continue; }
+                const m = spawnSeg(st, v, seg);
+                if (!m) return false;
+                if (sink) sink.push(...m);
+            }
+            if (v.bug) digRule(st);
+            return true;
+        };
+        // Remove a thing: what its going away spawns comes first (a bombchu's explosion), then its blocks are freed.
+        const kill = (st, u) => {
+            st.live = st.live.filter((l) => l.uref !== u.uref);
+            const made = [];
+            if (u.then && !make(st, timedVariants(u.then)[0], made)) return null;
+            const freed = [];
+            for (const [name, ptrs] of u.parts) { freed.push([name, ptrs[0]]); const c = deletePart(st, name, ptrs); if (c) freed.push([`${name} code`, c]); }
+            return { made, freed };
+        };
+        const nextEvent = (st) => {
+            let next = Infinity;
+            for (const l of st.live) if (l.die < next) next = l.die;
+            for (const p of st.pend) if (p.at < next) next = p.at;
+            return next;
+        };
+        // Run the clock to `until`: at each moment, things whose time is up go first (oldest first), then queued
+        // segments appear. log (optional) gets one entry per thing that goes or appears.
+        const advance = (st, until, log) => {
+            for (let guard = 0; guard < 100000; guard++) {
+                const next = nextEvent(st);
+                if (next > until) break;
+                st.t = next;
+                for (const u of st.live.filter((l) => l.die === next)) {
+                    const r = kill(st, u);
+                    if (!r) return false;
+                    if (log) log.push({ t: next, label: `${cap(GONE[u.key] || "it goes")} (from step ${u.step})`, ...r });
+                }
+                const due = st.pend.filter((p) => p.at === next);
+                if (!due.length) continue;
+                st.pend = st.pend.filter((p) => p.at !== next);
+                for (const p of due) {
+                    const keep = st.step;
+                    st.step = p.step;
+                    const m = spawnSeg(st, p.v, p.seg);
+                    st.step = keep;
+                    if (!m) return false;
+                    if (p.sink) p.sink.push(...m);
+                    if (log) log.push({ t: next, label: `${cap(APPEARS[p.v.key] || "more of it appears")} (from step ${p.step})`, made: m, freed: [] });
+                }
+            }
+            st.t = until;
+            return true;
+        };
+
+        // Link's rules for making something now.
+        const allowed = (st, v) => !(
+            (v.explosive && st.live.filter((l) => l.explosive).length >= 3) || // z_player.c: no new explosive while 3 are out
+            (v.held && st.live.some((l) => l.held)) || // one drawn or held item at a time
+            (v.single && st.live.some((l) => l.key === v.key)) || // one boomerang out at a time
+            (v.bottle && !(st.bottles[v.bottle] > 0))); // bottles need their contents
+        // The moves from a state. Things that go away on their own aren't moves: the clock does that.
+        const movesC = (st) => {
+            const out = [], live = st.live;
+            const holding = live.find((l) => l.held);
+            for (const v of variants) if (allowed(st, v)) out.push({ t: "make", v });
+            if (holding) { if (holding.fire) out.push({ t: "fire" }); out.push({ t: "away" }); }
+            if ((st.bottles.empty || 0) > 0) {
+                if (live.some((l) => catchableBug(st, l))) out.push({ t: "catch", kind: "bugs" });
+                if (live.some((l) => l.key === "fish" && l.catchable)) out.push({ t: "catch", kind: "fish" });
+            }
+            for (const l of live) {
+                if (l.early) out.push({ t: "early", uref: l.uref });
+                if (l.collect) out.push({ t: "collect", uref: l.uref });
+            }
+            groups.forEach((grp, gi) => { if (grp.some((x) => !st.used.has(x.id))) out.push({ t: "scene", gi }); });
+            if (nextEvent(st) < Infinity) out.push({ t: "wait" });
+            return out;
+        };
+        // Apply one move as the next step, then run the clock for as long as the step takes.
+        // Returns { st, entry } (entry describes the step for the page) or null if it can't be done.
+        const applyC = (st0, mv) => {
+            const st = cloneC(st0);
+            st.step = st0.step + 1; st.k = 0;
+            const entry = { n: st.step, t: st.t, label: "", made: [], freed: [], auto: [] };
+            const noun = (u) => (ACT.get(u.key) ? ACT.get(u.key).label.replace(/^(Draw|Take out|Throw|Release|Cast|Play) /, "") : u.label).toLowerCase();
+            let cost = D, action = true, actedOn = null;
+            if (mv.t === "make") {
+                const v = mv.v;
+                // Link's rules are checked here too, not only in movesC: pruning replays edited step lists
+                if (!allowed(st, v)) return null;
+                if (v.bottle) st.bottles = { ...st.bottles, [v.bottle]: st.bottles[v.bottle] - 1, empty: (st.bottles.empty || 0) + 1 };
+                if (!make(st, v, entry.made)) return null;
+                entry.label = v.label; entry.group = v.group; cost += v.extra || 0;
+            } else if (mv.t === "fire" || mv.t === "away") {
+                const h = st.live.find((l) => l.held);
+                if (!h) return null;
+                replace(st, h.uref, { held: false, die: Math.min(h.die, st.t + (mv.t === "fire" ? h.fire : h.away)) });
+                entry.label = `${mv.t === "fire" ? "Fire" : "Put away"} the ${noun(h)} from step ${h.step}${mv.t === "fire" ? " so it hits nothing" : ""}`;
+                actedOn = h.uref;
+            } else if (mv.t === "catch") {
+                // the game gives you the oldest one out (each offers the item; the last to ask wins, and category
+                // lists run newest first); a caught bottle bug is killed on the spot (z_en_insect.c:783-788)
+                const u = st.live.find(mv.kind === "bugs" ? (l) => catchableBug(st, l) : (l) => l.key === "fish" && l.catchable);
+                if (!u || !((st.bottles.empty || 0) > 0)) return null;
+                const r = kill(st, u);
+                if (!r) return null;
+                entry.made = r.made; entry.freed = r.freed;
+                const b = ACT.get(mv.kind).bottle;
+                st.bottles = { ...st.bottles, [b]: (st.bottles[b] || 0) + 1, empty: st.bottles.empty - 1 };
+                entry.label = mv.kind === "bugs" ? `Catch a bug back (the oldest one out, from step ${u.step})` : `Catch the fish back (from step ${u.step})`;
+                entry.removal = true;
+            } else if (mv.t === "early") {
+                const u = st.live.find((l) => l.uref === mv.uref);
+                if (!u) return null;
+                const r = kill(st, u);
+                if (!r) return null;
+                entry.made = r.made; entry.freed = r.freed;
+                entry.label = `The bombchu from step ${u.step} hits something and explodes`;
+                entry.removal = true; cost = 0; action = false;
+            } else if (mv.t === "collect") {
+                const u = st.live.find((l) => l.uref === mv.uref);
+                if (!u || !u.collect) return null;
+                // z_en_item00.c:526-530: collected, it floats for 15 updates, then Actor_Kill
+                replace(st, u.uref, { collect: false, die: Math.min(u.die, st.t + 16) });
+                entry.label = `Collect the ${u.label.toLowerCase()} from step ${u.step}`;
+                entry.removal = true; actedOn = u.uref;
+            } else if (mv.t === "scene") {
+                const left = groups[mv.gi].filter((x) => !st.used.has(x.id));
+                const s = left[0];
+                if (!s) return null;
+                st.used = new Set(st.used); st.used.add(s.id);
+                if (s.parts.length && !make(st, dropVariant(s), entry.made)) return null;
+                if (s.kill) {
+                    entry.freed.push([s.x.name, s.x.inst]);
+                    const c = deletePart(st, s.x.name, [s.x.inst]);
+                    if (c) entry.freed.push([`${s.x.name} code (last one)`, c]);
+                }
+                entry.label = `${s.verb} at ${s.where}`; entry.drop = s.text; entry.note = s.note;
+                entry.alts = left.slice(1).map((x) => (x.verb === s.verb ? `at ${x.where}` : `${x.verb} at ${x.where}`));
+            } else if (mv.t === "wait") {
+                const next = nextEvent(st);
+                if (next === Infinity) return null;
+                cost = next - st.t; action = false; entry.wait = true;
+                entry.label = cost ? `Wait ${cost} update${cost === 1 ? "" : "s"}` : "Wait a moment";
+            } else return null;
+            // Link's next action puts a drawn or held item away (gone a couple of updates later)
+            if (action) for (const h of st.live.filter((l) => l.held && l.uref !== actedOn && l.step !== st.step)) replace(st, h.uref, { held: false, die: Math.min(h.die, st.t + h.away) });
+            if (!advance(st, st.t + cost, entry.auto)) return null;
+            return { st, entry };
+        };
+        // Would the measured thing be allowed now (Link's own rules)?
+        const legal = (st) => allowed(st, LV) && !(LV.scene && st.used.has(LV.scene.id));
+        // Spawn the measured thing on a copy of st; returns where it went ({ addr, what, made, st }) or null.
+        const landC = (st) => {
+            const s2 = cloneC(st);
+            s2.step = "land"; s2.k = 0;
+            const made = [];
+            if (!make(s2, LV, made, true)) return null;
+            // the highest of its actors may be one that appears later (blue fire's flames)
+            const lastAt = Math.max(0, ...LV.segs.map((g) => g.at || 0));
+            if (lastAt && measure === "highest" && !advance(s2, s2.t + lastAt, null)) return null;
+            if (LV.scene && LV.scene.kill) deletePart(s2, LV.scene.x.name, [LV.scene.x.inst]);
+            let addr = null, what = null;
+            if (measure === "code") { const m = made.find((x) => x.code); if (m) { addr = m.code; what = m.codeWhat; } }
+            else if (measure === "highest") { for (const m of made) if (addr === null || m.inst > addr) { addr = m.inst; what = m.name; } }
+            else if (made.length) { addr = made[0].inst; what = made[0].name; }
+            return addr === null ? null : { addr, what, made, st: s2 };
+        };
+        // Where it lands if Link is up to `slack` updates late: the lowest landing over that window. The heap only
+        // changes when something goes or appears, so it's enough to try again after each of those moments.
+        // Returns the landing at the listed time with that lowest address as `low`, or null if any moment fails.
+        const slack = Math.max(0, Math.round(opts.slack || 0));
+        const scoreC = (st, first) => {
+            if (!first || !legal(st)) return null;
+            let low = first.addr;
+            const s2 = cloneC(st), until = st.t + slack;
+            for (let guard = 0; guard < 1000; guard++) {
+                const e = nextEvent(s2);
+                if (e > until) break;
+                if (!advance(s2, e, null) || !legal(s2)) return null;
+                const r = landC(s2);
+                if (!r) return null;
+                if (r.addr < low) low = r.addr;
+            }
+            return { ...first, low };
+        };
+
+        // States are told apart by a 53-bit hash of everything that decides what happens next.
+        const hash = (str) => {
+            let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+            for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); }
+            h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+            h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+            return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+        };
+        const unitKey = (st, l) => `${l.vkey}${l.held ? "h" : ""}${l.catchable ? "c" : ""}${l.collect ? "k" : ""}:${l.die === Infinity ? "-" : l.die - st.t}:${l.parts.map((p) => p[1].join("+")).join("/")}`;
+        const keyC = (st) => {
+            let s = "";
+            for (const b of st.B) if (b.free) s += b.a.toString(36) + "." + b.s.toString(36) + ",";
+            // bugs and fish keep their order (a catch takes the oldest); everything else is a set
+            const ordered = st.live.filter((l) => l.catchable), rest = st.live.filter((l) => !l.catchable);
+            s += "|" + Object.keys(st.ovl).sort().join(",") + "|" + (st.abs || "") + "|" + ordered.map((l) => unitKey(st, l)).join(",");
+            s += "|" + rest.map((l) => unitKey(st, l)).sort().join(",");
+            s += "|" + st.pend.map((p) => `${p.v.vkey}.${p.v.segs.indexOf(p.seg)}:${p.at - st.t}`).sort().join(",");
+            s += "|" + JSON.stringify(st.bottles) + "|" + [...st.used].sort().join(",");
+            return hash(s);
+        };
+        const freeBytes = (st) => { let n = 0; for (const b of st.B) if (b.free) n += b.s; return n; };
+        // a small seeded generator, so the same inputs always give the same answer
+        let seed = 0x9e3779b9;
+        const rand = () => { seed = (seed + 0x6d2b79f5) | 0; let x = Math.imul(seed ^ (seed >>> 15), 1 | seed); x ^= x + Math.imul(x ^ (x >>> 7), 61 | x); return ((x ^ (x >>> 14)) >>> 0) / 4294967296; };
+
+        // Beam search: each round extends every kept state by one step, then keeps the most promising `beam` of
+        // the new states: most of them by where the thing would land right now, some by how little memory is free
+        // (setups still building up), and a few at random so the search doesn't collapse onto one kind of setup.
+        const W = opts.beam || 400, maxSteps = opts.maxSteps || 30, maxMs = opts.maxMs || 20000, maxOptions = opts.maxOptions || 10;
+        const t0 = Date.now();
+        const baseline = scoreC(start, landC(start));
+        const found = new Map(); // landing address -> the shortest path found to it
+        const record = (addr, path, t) => {
+            const prev = found.get(addr);
+            if (!prev || path.length < prev.path.length || (path.length === prev.path.length && t < prev.t)) found.set(addr, { addr, path, t });
+        };
+        const seen = new Set([keyC(start)]);
+        let beam = [{ st: start, path: [] }], nodes = 0, stopped = null, rounds = 0;
+        while (beam.length && rounds < maxSteps && !stopped) {
+            rounds++;
+            const kids = [];
+            for (const nd of beam) {
+                for (const mv of movesC(nd.st)) {
+                    nodes++;
+                    const r = applyC(nd.st, mv);
+                    if (!r) continue;
+                    const k = keyC(r.st);
+                    if (seen.has(k)) continue;
+                    seen.add(k);
+                    const path = nd.path.concat([mv]);
+                    // where it would land right now, ignoring Link's rules (the beam's score); an option if allowed
+                    // and it still holds when Link is a little late
+                    const raw = landC(r.st);
+                    kids.push({ st: r.st, path, score: raw ? raw.addr : 0, free: freeBytes(r.st) });
+                    const sc = raw && scoreC(r.st, raw);
+                    if (sc) record(sc.low, path, r.st.t);
+                }
+                if (Date.now() - t0 > maxMs) { stopped = "time"; break; }
+            }
+            kids.sort((a, b) => b.score - a.score || a.free - b.free || a.st.t - b.st.t);
+            const byScore = Math.ceil(W * 0.6), byFull = Math.ceil(W * 0.25);
+            const next = kids.slice(0, byScore);
+            const rest = kids.slice(byScore).sort((a, b) => a.free - b.free || b.score - a.score);
+            next.push(...rest.slice(0, byFull));
+            const others = rest.slice(byFull);
+            while (next.length < W && others.length) next.push(others.splice(Math.floor(rand() * others.length), 1)[0]);
+            beam = next;
+        }
+        if (!stopped && rounds >= maxSteps && beam.length) stopped = "steps";
+
+        // Replay a path from the start (steps are deterministic), for the page and for pruning.
+        const replayC = (path) => {
+            let st = start;
+            const steps = [];
+            for (const mv of path) { const r = applyC(st, mv); if (!r) return null; steps.push(r.entry); st = r.st; }
+            return { st, steps };
+        };
+        const landOf = (path) => { const r = replayC(path); return r ? scoreC(r.st, landC(r.st)) : null; };
+        // Drop step i (0-based) from a path; things named by step number shift down. null if a later step names a
+        // thing step i made.
+        const dropStep = (path, i) => {
+            const q = [];
+            for (let j = 0; j < path.length; j++) {
+                if (j === i) continue;
+                const mv = path[j];
+                if (mv.uref) {
+                    const [s, k] = mv.uref.split(":").map(Number);
+                    if (s === i + 1) return null;
+                    q.push(s > i + 1 ? { ...mv, uref: `${s - 1}:${k}` } : mv);
+                } else q.push(mv);
+            }
+            return q;
+        };
+        // Leave out every step that isn't needed: try without each one, keep the shorter path if it lands as high.
+        const prune = (path, addr) => {
+            for (let changed = true; changed && Date.now() - t0 < maxMs + 5000;) {
+                changed = false;
+                for (let i = path.length - 1; i >= 0; i--) {
+                    const q = dropStep(path, i);
+                    if (!q) continue;
+                    const r = landOf(q);
+                    if (r && r.low >= addr) { path = q; addr = r.low; changed = true; }
+                }
+            }
+            return { path, addr };
+        };
+        // Candidates: the highest landings found, plus the best path of each length. Each is pruned (pruning can
+        // also move it higher), then the options are the highest distinct landings, fewest steps first on a tie.
+        const ranked = [...found.values()].filter((f) => !baseline || f.addr > baseline.low).sort((a, b) => b.addr - a.addr || a.path.length - b.path.length);
+        const longest = [];
+        for (const f of ranked) if (!longest[f.path.length] || f.addr > longest[f.path.length].addr) longest[f.path.length] = f;
+        const cands = [...new Set([...ranked.slice(0, maxOptions * 3), ...longest.filter(Boolean)])];
+        const pool = cands.map((f) => prune(f.path, f.addr)).sort((a, b) => b.addr - a.addr || a.path.length - b.path.length);
+        const options = [], have = new Set();
+        for (const p of pool) {
+            if (options.length >= maxOptions) break;
+            if (have.has(p.addr)) continue;
+            const rep = replayC(p.path), land = rep ? scoreC(rep.st, landC(rep.st)) : null;
+            if (!land) continue;
+            have.add(p.addr);
+            // what is still out when it lands, and how long each has left
+            const out = rep.st.live.map((l) => ({ label: l.label, key: l.key, step: l.step, count: l.parts.length, left: l.die === Infinity ? null : l.die - rep.st.t, ptr: l.parts[0] && l.parts[0][1][0], held: l.held }));
+            options.push({ addr: land.low, exact: land.addr, what: land.what, steps: rep.steps, t: rep.st.t, out, land: { label: LV.label, made: land.made, what: land.what }, before: rep.st.B, blocks: land.st.B });
+        }
+        // The highest it reached with each number of steps, for a quick read of what more steps buy: only the
+        // lengths that beat every shorter one.
+        const lengths = pool.map((p) => ({ steps: p.path.length, addr: p.addr })).sort((a, b) => a.steps - b.steps || b.addr - a.addr);
+        let best = baseline ? baseline.low : 0;
+        const byLength = [];
+        for (const x of lengths) if (x.addr > best) { best = x.addr; byLength.push(x); }
+        const reason = !variants.length && !groups.length ? "Nothing is ticked for Link to use." : measure === "code" && !found.size && !baseline ? "Its code is already loaded, so there's no code to measure." : null;
+        return { climb: true, options, baseline: baseline ? { addr: baseline.low, exact: baseline.addr, what: baseline.what, blocks: baseline.st.B } : null, byLength, nodes, rounds, stopped, ms: Date.now() - t0, stepUpdates: D, slack, measure, reason };
+    }
+
+
+    return { fromDump, fromAddress, solve, climb, ACTIONS, actor, hex, ID, NODE, al16, ADDR, cap };
 })();
 if (typeof module !== "undefined") module.exports = Fill;
 
@@ -880,6 +1378,23 @@ function landChoice() {
 }
 renderLand();
 $("land").onchange = () => { $("landOther").hidden = $("land").value !== "@actor"; ready(); };
+
+// ---------- bottles (Option 2) ----------
+// Bottle contents as gSaveContext stores them (0xFF = no bottle, 0x14 = empty).
+const BOTTLES = [[0xff, "No bottle"], [0x14, "Empty"], [0x1d, "Bugs"], [0x19, "Fish"], [0x18, "Fairy"], [0x1c, "Blue fire"]];
+$("bottles").innerHTML = [0, 1, 2, 3].map((i) => `<select id="bottle${i}" aria-label="Bottle ${i + 1}">${BOTTLES.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select>`).join("");
+const bottlesIn = () => [0, 1, 2, 3].map((i) => Number($("bottle" + i).value));
+
+// ---------- goal: an address, or as high as possible ----------
+let goal = "addr";
+function showGoal() {
+  const high = goal === "high";
+  $("addrBox").hidden = high; $("highOpts").hidden = !high;
+  $("landLabel").textContent = high ? "What should go as high as possible" : "What will land there";
+  $("landNote").textContent = high ? "The search makes it after the steps, the way the game would, and measures where it goes." : "It counts if the thing itself, its code or one of its tables starts at the address.";
+  $("go").textContent = high ? "Find the highest" : "Find options";
+}
+for (const r of document.querySelectorAll("input[name=goal]")) r.onchange = () => { goal = r.value; showGoal(); $("out").innerHTML = ""; ready(); };
 $("landActor").oninput = ready;
 
 for (const r of document.querySelectorAll("input[name=mode]")) r.onchange = () => {
@@ -937,23 +1452,34 @@ function stepsHTML(steps) {
 // ---------- solve in a worker ----------
 const workerURL = URL.createObjectURL(new Blob([$("engineSrc").textContent, `
 self.onmessage = (e) => {
-  const { mode, raw, start, address, on, scene, land, limits } = e.data;
+  const { mode, raw, start, address, on, scene, land, limits, goal, climbOpts, bottles } = e.data;
   try {
     const d = mode === "dump" ? Fill.fromDump(raw) : Fill.fromAddress(start);
+    if (bottles) d.bottles = bottles;
     const ids = new Set(scene);
-    self.postMessage({ type: "done", r: Fill.solve(d, { address, on, land, useScene: (s) => ids.has(s.id), ...(limits || {}) }) });
+    const opts = { address, on, land, useScene: (s) => ids.has(s.id), ...(climbOpts || {}), ...(limits || {}) };
+    self.postMessage({ type: "done", r: goal === "high" ? Fill.climb(d, opts) : Fill.solve(d, opts) });
   } catch (err) { self.postMessage({ type: "error", message: err.message }); }
 };`], { type: "text/javascript" }));
 let worker = null;
 
 const LONGER = { maxOptions: 60, maxMs: 90000, maxNodes: 900000 };
+// "As high as possible": keep almost four times as many setups each step, for up to 90 seconds
+const LONGER_HIGH = { beam: 1500, maxMs: 90000 };
 $("go").onclick = () => runSearch(null);
 function runSearch(limits) {
   const out = $("out");
   try {
-    const address = hexIn("addr", "The target address");
+    const high = goal === "high";
+    const address = high ? null : hexIn("addr", "The target address");
     const start = mode === "addr" ? hexIn("startAddr", "The start address") : null;
-    if (mode === "addr" && address < start) throw new Error("The target has to be at or above where free memory starts.");
+    if (!high && mode === "addr" && address < start) throw new Error("The target has to be at or above where free memory starts.");
+    const num = (id, name, lo, hi) => {
+      const v = Number($(id).value.trim());
+      if (!Number.isInteger(v) || v < lo || v > hi) throw new Error(`${name} must be a whole number from ${lo} to ${hi}.`);
+      return v;
+    };
+    const climbOpts = high ? { measure: $("measure").value, stepUpdates: num("stepUpdates", "How long each step takes", 1, 1000), slack: num("slack", "How late it may land", 0, 200), maxSteps: num("maxStepsC", "The most steps", 1, 80) } : null;
     const land = landChoice();
     if (!land) throw new Error($("land").value === "@actor" ? "That isn't an actor name the page knows (for example En_Item00)." : "Choose what will land there.");
     const on = {};
@@ -965,9 +1491,9 @@ function runSearch(limits) {
     worker.onmessage = (e) => {
       worker.terminate(); worker = null; $("go").disabled = false; $("progress").textContent = "";
       if (e.data.type === "error") { out.innerHTML = `<p class="verdict bad">${esc(e.data.message)}</p>`; return; }
-      show(e.data.r, address, limits);
+      if (e.data.r.climb) showClimb(e.data.r, limits); else show(e.data.r, address, limits);
     };
-    worker.postMessage({ mode, raw: mode === "dump" ? dump.raw : null, start, address, on, scene, land, limits });
+    worker.postMessage({ mode, raw: mode === "dump" ? dump.raw : null, start, address, on, scene, land, limits, goal, climbOpts, bottles: mode === "addr" ? bottlesIn() : null });
   } catch (err) { out.innerHTML = `<p class="verdict bad">${esc(err.message)}</p>`; }
 };
 // how long each temporary thing has to stay for this option, next to how long it lasts on its own
@@ -1037,6 +1563,71 @@ function show(r, address, limits) {
     if (!d.open || d.dataset.done) return;
     d.dataset.done = 1;
     d.insertAdjacentHTML("beforeend", heapView(r.options[Number(d.dataset.i)].blocks, address));
+    scrollToTarget(d);
+  });
+}
+
+// ---------- results: as high as possible ----------
+// What a step made and freed, in a few words.
+function bitsHTML(s) {
+  const bits = [];
+  if (s.made.length) bits.push(s.made.length > 4 ? `${s.made.length} actors from <span class="addr">${hex(s.made[0].inst)}</span>` : s.made.map(line).join("; "));
+  else if (s.drop) bits.push(`drops ${esc(s.drop)}`);
+  for (const [what, at] of s.freed) bits.push(`${esc(what)} at <span class="addr">${hex(at)}</span> freed`);
+  return bits.join(". ");
+}
+// The steps with the update each starts at, and under each what goes away or appears on its own meanwhile.
+function climbStepsHTML(steps) {
+  return `<ol>${steps.map((s) => {
+    const alts = s.alts && s.alts.length ? ` <span class="alts">(or ${s.alts.map(esc).join(" / ")})</span>` : "";
+    const auto = s.auto.length ? `<ol class="auto">${s.auto.map((a) => `<li>update ${a.t}: ${esc(a.label)}${bitsHTML(a) ? ` → ${bitsHTML(a)}` : ""}</li>`).join("")}</ol>` : "";
+    return `<li><b>${esc(s.label)}</b>${alts} <span class="muted">at update ${s.t} → ${bitsHTML(s) || (s.wait ? "nothing new" : "nothing changes")}${s.note ? ` (${esc(s.note)})` : ""}</span>${auto}</li>`;
+  }).join("")}</ol>`;
+}
+// What is still out when it lands, grouped, with how long each has left on its own.
+const THING = {
+  bomb: "bomb", chu: "bombchu", explosion: "bombchu explosion", seed: "drawn seed", arrow: "drawn arrow", fireArrow: "drawn fire arrow", iceArrow: "drawn ice arrow",
+  lightArrow: "drawn light arrow", nut: "Deku nut", boomerang: "boomerang", hookshot: "hookshot", bugs: "bug", fish: "fish", fairy: "fairy", blueFire: "blue fire flames",
+  dins: "Din's Fire", nayrus: "Nayru's Love", farores: "Farore's Wind", spin: "magic spin", chargedSpin: "magic spin", drop: "drop", storms: "Song of Storms effect",
+};
+function stillOutHTML(o) {
+  const groups = new Map();
+  for (const x of o.out) {
+    const k = `${x.key}|${x.step}`, g = groups.get(k) || { ...x, n: 0 };
+    g.n += x.count; if (x.left !== null && (g.left === null || x.left < g.left)) g.left = x.left;
+    groups.set(k, g);
+  }
+  const list = [...groups.values()].map((g) => `${esc(THING[g.key] || (/^(zelda|saria|epona|sun|time)$/.test(g.key) ? "song effect" : g.label))}${g.n > 1 ? ` ×${g.n}` : ""} from step ${g.step} <span class="muted">(${g.left === null ? "stays until removed" : `${g.left} update${g.left === 1 ? "" : "s"} left`})</span>`);
+  return list.length ? `<p>Still out when it lands: ${list.join("; ")}.</p>` : `<p class="muted">Nothing Link made is still out when it lands.</p>`;
+}
+function showClimb(r, limits) {
+  const out = $("out");
+  const longer = !limits ? `<p><button type="button" class="more" id="longer">Search harder</button> <span class="muted">Keeps almost four times as many setups at each step, for up to 90 seconds.</span></p>` : "";
+  const base = r.baseline ? `Doing nothing, it lands at <span class="addr">${hex(r.baseline.exact)}</span>.` : "Right now, without any steps, it can't be made.";
+  if (!r.options.length) {
+    out.innerHTML = `<p class="verdict bad">Nothing found that puts it higher.</p><p class="muted">${r.reason ? esc(r.reason) + " " : ""}${base}</p>` + longer;
+    if ($("longer")) $("longer").onclick = () => runSearch(LONGER_HIGH);
+    return;
+  }
+  const top = r.options[0], n = (k) => `${k} step${k === 1 ? "" : "s"}`;
+  const late = r.slack ? `, even landing up to ${r.slack} updates late` : "";
+  const curve = r.byLength.length > 1 ? `<p class="muted">Highest by number of steps: ${r.byLength.map((x) => `${n(x.steps)}: <span class="addr">${hex(x.addr)}</span>`).join(" · ")}.</p>` : "";
+  const stop = r.stopped === "time" ? " The search ran out of time, so a better setup may exist." : "";
+  out.innerHTML = `<p class="verdict ok">Highest found: <span class="addr">${hex(top.addr)}</span>, in ${n(top.steps.length)}${late}.</p>
+    <p class="muted">${base} Each step takes ${r.stepUpdates} updates (a song adds its playback).${stop}</p>${curve}${longer}` +
+    r.options.map((o, i) => `<div class="opt"><h3>Option ${i + 1} · <span class="addr">${hex(o.addr)}</span> · ${n(o.steps.length)}</h3>
+        ${climbStepsHTML(o.steps)}
+        <p>Then, at update ${o.t}, <b>${esc(o.land.label)}</b> <span class="muted">→ ${o.land.made.length > 4 ? `${o.land.made.length} actors from <span class="addr">${hex(o.land.made[0].inst)}</span>` : o.land.made.map(line).join("; ")}</span></p>
+        <p class="muted">${esc(o.what)} lands at <span class="addr">${hex(o.exact)}</span>${o.exact !== o.addr ? `. Up to ${r.slack} updates late, it still lands at <span class="addr">${hex(o.addr)}</span> or higher` : r.slack ? `, and still does up to ${r.slack} updates late` : ""}.</p>
+        ${stillOutHTML(o)}
+        <details data-i="${i}"><summary>Heap after</summary></details></div>`).join("") +
+    `<p class="muted">Lifetimes come from the decomp; where the game rolls a random one (bugs dig away 200–240 updates after they come out), the shortest is used. How long Link takes for each step is the one number you set, so check tight timings in the simulator.</p>`;
+  if ($("longer")) $("longer").onclick = () => runSearch(LONGER_HIGH);
+  for (const d of out.querySelectorAll("details[data-i]")) d.addEventListener("toggle", () => {
+    if (!d.open || d.dataset.done) return;
+    d.dataset.done = 1;
+    const o = r.options[Number(d.dataset.i)];
+    d.insertAdjacentHTML("beforeend", heapView(o.blocks, o.exact));
     scrollToTarget(d);
   });
 }

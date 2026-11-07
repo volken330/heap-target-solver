@@ -1,0 +1,1045 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heap Target Solver</title>
+<meta name="description" content="OoT NTSC 1.2: every way to make something land at a heap address.">
+<style>
+:root { color-scheme: light dark; --bg:#fff; --ink:#111; --muted:#666; --line:#ccc; --field:#fff; --ok:#1a7f37; --bad:#c62828;
+  --free:#eee; --actor:#6b8fb5; --code:#9a84b8; --other:#aaa; --new:#e0a050; --target:#d32f2f;
+  --mono: ui-monospace, Menlo, Consolas, monospace; --sans: system-ui, -apple-system, "Segoe UI", sans-serif; }
+@media (prefers-color-scheme: dark) { :root { --bg:#161616; --ink:#e6e6e6; --muted:#999; --line:#444; --field:#1e1e1e; --ok:#5cb85c; --bad:#ef6c6c; --free:#2a2a2a; --actor:#5f86ad; --code:#8e7aad; --other:#666; --new:#c98a3c; --target:#ff5c5c; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--sans); }
+main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+p.sub { margin: 0 0 20px; color: var(--muted); }
+label.l { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
+input, select { font: 14px var(--mono); color: var(--ink); background: var(--field); border: 1px solid var(--line); border-radius: 3px; padding: 5px 7px; width: 100%; min-width: 0; }
+select { font-family: var(--sans); max-width: 520px; }
+input[type=file] { font: 13px var(--sans); padding: 3px; border: 0; }
+input[type=checkbox], input[type=radio] { width: auto; padding: 0; margin: 3px 0 0; flex: none; }
+.seg { display: flex; gap: 14px; font-size: 14px; margin-top: 4px; }
+.seg label { display: flex; align-items: center; gap: 4px; }
+.one { margin-top: 12px; max-width: 260px; }
+.status { font-size: 13px; color: var(--muted); margin-top: 4px; min-height: 1.4em; }
+.status.err { color: var(--bad); }
+.legend { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--muted); margin: 4px 0; }
+.legend i { display: inline-block; width: 9px; height: 9px; margin-right: 4px; vertical-align: -1px; }
+.strip { position: relative; height: 18px; background: var(--free); border: 1px solid var(--line); overflow: hidden; }
+.strip div { position: absolute; top: 0; bottom: 0; min-width: 1px; }
+.strip .mark { background: var(--target); width: 2px; }
+.axis { display: flex; justify-content: space-between; font: 11px var(--mono); color: var(--muted); margin-top: 2px; }
+.blocks { max-height: 260px; overflow: auto; border: 1px solid var(--line); margin-top: 6px; position: relative; }
+table { border-collapse: collapse; width: 100%; font: 12px var(--mono); }
+td, th { padding: 2px 8px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-family: var(--sans); color: var(--muted); font-weight: normal; position: sticky; top: 0; background: var(--bg); }
+td.c { white-space: normal; font-family: var(--sans); }
+tr.free td { color: var(--muted); }
+tr.new td { background: color-mix(in srgb, var(--new) 15%, transparent); }
+tr.tgt td { border-top: 2px solid var(--target); font-weight: bold; }
+.dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; }
+.tag { font-size: 11px; color: var(--muted); margin-left: 6px; }
+.fillers { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 16px; }
+.filler { display: flex; align-items: flex-start; gap: 6px; padding: 3px 0; font-size: 14px; cursor: pointer; }
+.filler.off { color: var(--muted); }
+.filler small, .brk small { color: var(--muted); display: block; font-size: 12px; line-height: 1.25; }
+.brk { display: flex; gap: 6px; align-items: flex-start; padding: 3px 0; font-size: 14px; }
+.brk.skip { color: var(--muted); }
+button { font: 14px var(--sans); color: var(--ink); background: var(--field); border: 1px solid var(--line); border-radius: 3px; padding: 5px 14px; margin-top: 18px; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: .5; cursor: default; }
+#go { font-weight: bold; }
+button.more { margin: 0 8px 0 0; padding: 3px 10px; font-size: 13px; }
+#out { margin-top: 20px; }
+.verdict { font-weight: bold; margin: 0 0 6px; }
+.verdict.ok { color: var(--ok); } .verdict.bad { color: var(--bad); }
+ol { padding-left: 22px; margin: 6px 0; } li { margin: 4px 0; }
+.addr { font-family: var(--mono); }
+.muted { color: var(--muted); font-size: 13px; }
+.theme { display: none; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 520px; }
+@media (max-width: 520px) { .pair { grid-template-columns: 1fr; } }
+.row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.row button { margin-top: 18px; } .row span { margin-top: 18px; }
+.igroup { margin-top: 8px; } .igroup b { display: block; font-size: 13px; color: var(--muted); font-weight: normal; margin-bottom: 1px; }
+.opt { border-top: 1px solid var(--line); padding: 10px 0; }
+.opt h3 { font-size: 15px; margin: 0; }
+.opt details { margin-top: 4px; } summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.alts { color: var(--muted); font-weight: normal; }
+.model { border-top: 1px solid var(--line); padding-top: 10px; margin: 0; font-size: 13px; }
+.model summary { font-weight: bold; font-size: 14px; color: var(--ink); }
+.model .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 6px; }
+@media (max-width: 620px) { .model .cols { grid-template-columns: 1fr; } }
+.model ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted); } .model li { margin: 2px 0; }
+.model code { font: 12px var(--mono); }
+.step { margin-top: 24px; }
+.step h2 { font-size: 16px; margin: 0 0 8px; }
+.step h2 .n::after { content: ". "; }
+.step h3 { font-size: 14px; margin: 14px 0 4px; }
+.choices { display: grid; gap: 4px; margin-bottom: 12px; }
+.choice { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; font-size: 14px; }
+.choice small { display: block; color: var(--muted); font-size: 12.5px; }
+.warn { color: var(--bad); font-size: 12px; }
+.life table { font: 13px var(--sans); margin-top: 4px; } .life td, .life th { white-space: normal; vertical-align: top; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Heap target solver</h1>
+  <p class="sub">Finds every way it can to fill Ocarina of Time's actor heap so that what you choose lands at the address you choose. NTSC 1.2 only.</p>
+
+
+  <section class="step">
+    <h2><span class="n">1</span>Starting point</h2>
+    <div class="choices" role="radiogroup" aria-label="Starting point">
+      <label class="choice"><input type="radio" name="mode" value="dump" checked><span><b>Option 1: a RAM dump</b><small>The solver can also remove actors already in the scene: break pots and crates, cut bushes, kill enemies, collect items.</small></span></label>
+      <label class="choice"><input type="radio" name="mode" value="addr"><span><b>Option 2: where free memory starts</b><small>The solver can only add actors Link makes himself.</small></span></label>
+    </div>
+
+    <div id="dumpMode">
+      <label class="l" for="dump">RAM dump</label>
+      <input type="file" id="dump">
+      <div class="status" id="dumpStatus">Dolphin Wii VC MEM1 or raw RDRAM. It stays in your browser.</div>
+      <div id="now" hidden>
+        <h3>Heap in the dump</h3>
+        <div id="heapNow"></div>
+        <h3>Actors in the scene the solver may remove</h3>
+        <div id="scene"></div>
+      </div>
+    </div>
+    <div id="addrMode" hidden>
+      <div class="pair">
+        <div><label class="l" for="startAddr">Free memory starts at</label><input id="startAddr" placeholder="801F67E0" autocomplete="off"></div>
+        <div><label class="l">Link is</label><div class="seg"><label><input type="radio" name="age" value="child" checked> Child</label><label><input type="radio" name="age" value="adult"> Adult</label></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="step">
+    <h2><span class="n">2</span>End point</h2>
+    <div class="pair">
+      <div><label class="l" for="addr">Fill the heap up to</label><input id="addr" placeholder="801F8550" autocomplete="off"></div>
+      <div><label class="l" for="land">What will land there</label><select id="land"></select></div>
+    </div>
+    <div class="one" id="landOther" hidden><label class="l" for="landActor">Actor name</label><input id="landActor" list="actorNames" placeholder="En_Item00" autocomplete="off"><datalist id="actorNames"></datalist></div>
+    <div class="status" id="landNote">It counts if the thing itself, its code or one of its tables starts at the address.</div>
+  </section>
+
+  <section class="step">
+    <h2><span class="n">3</span>What Link can use</h2>
+    <div id="items"></div>
+  </section>
+
+  <div class="row"><button id="go" type="button" disabled>Find options</button><span class="muted" id="progress"></span></div>
+  <div id="out"></div>
+
+  <details class="model" style="margin-top:32px">
+    <summary>What it models</summary>
+    <div class="cols">
+      <div><b>Modeled from the decomp</b><ul>
+        <li>Heap allocation exactly as <code>__osMalloc</code>: first fit from the bottom, 16-byte sizes, 0x30-byte headers, a gap split only when the rest is bigger than a header.</li>
+        <li>Top-down allocation (<code>__osMallocR</code>) for persistent actor code, and one shared 0x24E0 block for absolute code (songs, spells, magic arrows).</li>
+        <li>Freeing as <code>__osFree</code>: a freed block merges with free neighbours.</li>
+        <li>Spawning an actor: its code first if not loaded, then the actor, then what its Init allocates (arrow tables, Farore's Wind table, 3 bugs, 19 blue flames).</li>
+        <li>Removing an actor frees it and its tables; normal code is freed with its last actor.</li>
+        <li>Pot, crate and bush drops as <code>Item_DropCollectible</code> decides them for Link's age, items, health and collected flags.</li>
+        <li>At most 3 bombs, bombchus and explosions out at once; one drawn or held item at a time. The thing that lands counts too.</li>
+        <li>Catching a bottle bug always takes the oldest one out, and needs an empty bottle.</li>
+      </ul></div>
+      <div><b>Not modeled</b><ul>
+        <li>Timing. Things that go away on their own (bombs, nuts, the boomerang, drops) stay until a step says they go.</li>
+        <li>Anything else in the scene allocating or freeing meanwhile (enemies, timers, room changes).</li>
+        <li>Enemy drops and death effects when one is killed, except a Deku Baba's Deku nut (as on a sword kill).</li>
+        <li>Sizes are the simulator's NTSC 1.2 export; other versions differ.</li>
+      </ul></div>
+    </div>
+  </details>
+</main>
+<script id="engineSrc">
+const ACTORS = [["Player",2692,0,0,2],null,["En_Test",2328,22704,0,5],null,["En_GirlA",452,10528,0,6],null,null,["En_Part",332,5648,0,7],["En_Light",340,3568,0,7],["En_Door",456,3648,2,10],["En_Box",492,6976,0,11],["Bg_Dy_Yoseizo",14500,11776,0,6],["Bg_Hidan_Firewall",400,1888,0,1],["En_Poh",920,16784,0,5],["En_Okuta",940,9696,0,5],["Bg_Ydan_Sp",568,6000,0,1],["En_Bom",504,3792,2,3],["En_Wallmas",772,6672,0,5],["En_Dodongo",1816,11680,0,5],["En_Firefly",868,8560,0,5],["En_Horse",1004,49760,0,1],["En_Item00",412,0,0,8],["En_Arrow",592,5872,2,7],null,["En_Elf",704,18880,0,7],["En_Niw",1960,13104,0,6],null,["En_Tite",872,11680,0,5],["En_Reeba",716,6768,0,8],["En_Peehat",1052,14080,0,5],["En_Butte",600,5584,0,7],null,["En_Insect",796,9504,0,7],["En_Fish",580,8464,0,7],null,["En_Holl",324,4048,2,10],["En_Scene_Change",320,304,0,6],["En_Zf",1368,27392,0,5],["En_Hata",620,1424,0,6],["Boss_Dodongo",6160,39648,0,9],["Boss_Goma",2828,24448,0,9],["En_Zl1",508,15872,0,4],["En_Viewer",1512,11984,0,7],["En_Goma",916,11408,0,5],["Bg_Pushbox",344,768,0,1],["En_Bubble",592,5152,0,5],["Door_Shutter",360,8832,2,10],["En_Dodojr",688,7840,0,5],["En_Bdfire",468,2960,0,5],null,["En_Boom",492,2240,2,8],["En_Torch2",2692,10144,0,9],["En_Bili",528,8912,0,5],["En_Tp",456,7760,0,5],null,["En_St",1388,11376,0,5],["En_Bw",796,13168,0,5],["En_A_Obj",440,0,0,6],["En_Eiyer",708,7264,0,5],["En_River_Sound",320,2448,0,1],["En_Horse_Normal",792,9760,0,1],["En_Ossan",712,26080,0,4],["Bg_Treemouth",352,5728,0,1],["Bg_Dodoago",576,3504,0,1],["Bg_Hidan_Dalm",748,2128,0,1],["Bg_Hidan_Hrock",564,2096,0,1],["En_Horse_Ganon",664,3456,0,1],["Bg_Hidan_Rock",440,4336,0,1],["Bg_Hidan_Rsekizou",760,3040,0,1],["Bg_Hidan_Sekizou",772,5200,0,1],["Bg_Hidan_Sima",508,3872,0,1],["Bg_Hidan_Syoku",348,1120,0,1],["En_Xc",812,26512,0,4],["Bg_Hidan_Curtain",404,2720,0,6],["Bg_Spot00_Hanebasi",368,4368,0,1],["En_Mb",1276,16944,0,5],["En_Bombf",512,5232,0,6],["En_Zl2",624,18224,0,4],["Bg_Hidan_Fslift",348,1232,0,1],["En_OE2",388,224,0,4],["Bg_Ydan_Hasi",348,1968,0,1],["Bg_Ydan_Maruta",564,1760,0,6],["Boss_Ganondrof",1384,19824,0,9],null,["En_Am",892,9216,0,5],["En_Dekubaba",1032,15008,0,5],["En_M_Fire1",396,416,2,8],["En_M_Thunder",444,5616,2,7],["Bg_Ddan_Jd",352,1616,0,1],["Bg_Breakwall",480,3696,0,1],["En_Jj",772,5584,0,7],["En_Horse_Zelda",664,2800,0,1],["Bg_Ddan_Kd",440,2288,0,1],["Door_Warp1",480,17072,0,7],["Obj_Syokudai",492,3136,0,6],["Item_B_Heart",348,1008,0,8],["En_Dekunuts",772,6144,0,5],["Bg_Menkuri_Kaiten",340,400,0,1],["Bg_Menkuri_Eye",416,1184,0,1],["En_Vali",1080,9888,0,5],["Bg_Mizu_Movebg",376,4512,0,1],["Bg_Mizu_Water",336,3280,0,1],["Arms_Hook",520,3424,2,7],["En_fHG",644,10544,0,1],["Bg_Mori_Hineri",348,3328,0,1],["En_Bb",792,15568,0,5],["Bg_Toki_Hikari",324,3488,0,1],["En_Yukabyun",400,1552,0,5],["Bg_Toki_Swd",396,5712,0,6],["En_Fhg_Fire",500,9760,0,9],["Bg_Mjin",348,992,0,1],["Bg_Hidan_Kousi",348,1408,0,6],["Door_Toki",344,352,0,1],["Bg_Hidan_Hamstep",568,3760,0,1],["En_Bird",460,1216,0,6],null,null,null,null,["En_Wood02",404,4576,0,6],null,null,null,null,["En_Lightbox",340,1152,0,6],["En_Pu_box",344,832,0,1],null,null,["En_Trap",476,4768,0,1],["En_Arow_Trap",324,336,0,6],["En_Vase",316,256,0,6],null,["En_Ta",728,14784,0,4],["En_Tk",1888,7728,0,4],["Bg_Mori_Bigst",348,2352,0,1],["Bg_Mori_Elevator",356,2800,0,1],["Bg_Mori_Kaitenkabe",376,1632,0,1],["Bg_Mori_Rakkatenjo",360,2416,0,1],["En_Vm",932,6320,0,5],["Demo_Effect",400,23280,0,1],["Demo_Kankyo",1524,15616,0,1],["Bg_Hidan_Fwbig",400,3296,0,6],["En_Floormas",772,13280,0,5],["En_Heishi1",668,5392,0,4],["En_Rd",860,10416,0,5],["En_Po_Sisters",808,19696,0,5],["Bg_Heavy_Block",360,6384,0,1],["Bg_Po_Event",568,7744,0,1],["Obj_Mure",412,4112,0,7],["En_Sw",1224,14320,0,4],["Boss_Fd",17296,29488,0,9],["Object_Kankyo",5712,12832,0,7],["En_Du",524,6816,0,4],["En_Fd",12752,11456,0,5],["En_Horse_Link_Child",660,7680,0,1],["Door_Ana",396,1648,0,7],["Bg_Spot02_Objects",356,4944,0,1],["Bg_Haka",344,1728,0,1],["Magic_Wind",356,7424,1,7],["Magic_Fire",412,8912,1,7],null,["En_Ru1",908,30368,0,4],["Boss_Fd2",5740,15664,0,9],["En_Fd_Fire",412,3344,0,5],["En_Dh",788,6864,0,5],["En_Dha",848,4096,0,5],["En_Rl",412,3808,0,4],["En_Encount1",352,2912,0,6],["Demo_Du",420,14304,0,4],["Demo_Im",748,16240,0,4],["Demo_Tre_Lgt",364,1808,0,7],["En_Fw",1776,6064,0,5],["Bg_Vb_Sima",364,1808,0,1],["En_Vb_Ball",420,4512,0,9],["Bg_Haka_Megane",348,1024,0,6],["Bg_Haka_MeganeBG",348,1728,0,1],["Bg_Haka_Ship",360,2624,0,1],["Bg_Haka_Sgami",808,3104,0,6],null,["En_Heishi2",980,8704,0,4],["En_Encount2",2576,4656,0,5],["En_Fire_Rock",464,4368,0,5],["En_Brob",688,4336,0,5],["Mir_Ray",672,6336,0,7],["Bg_Spot09_Obj",344,1296,0,1],["Bg_Spot18_Obj",348,2256,0,1],["Boss_Va",936,94704,0,9],["Bg_Haka_Tubo",500,2592,0,1],["Bg_Haka_Trap",652,5584,0,1],["Bg_Haka_Huta",348,2720,0,1],["Bg_Haka_Zou",424,4592,0,6],["Bg_Spot17_Funen",316,592,0,0],["En_Syateki_Itm",456,3488,0,6],["En_Syateki_Man",540,3520,0,4],["En_Tana",316,672,0,6],["En_Nb",792,17872,0,4],["Boss_Mo",5500,65712,0,9],["En_Sb",504,5184,0,5],["En_Bigokuta",884,11024,0,5],["En_Karebaba",640,6384,0,5],["Bg_Bdan_Objects",428,4816,0,1],["Demo_Sa",420,11040,0,4],["Demo_Go",400,3424,0,4],["En_In",920,11680,0,4],["En_Tr",728,6400,0,4],["Bg_Spot16_Bombstone",520,5440,0,6],null,["Bg_Hidan_Kowarerukabe",436,3792,0,1],["Bg_Bombwall",660,2240,0,1],["Bg_Spot08_Iceblock",396,4160,0,1],["En_Ru2",772,11648,0,4],["Obj_Dekujr",404,1600,0,4],["Bg_Mizu_Uzu",344,464,0,6],["Bg_Spot06_Objects",448,5136,0,6],["Bg_Ice_Objects",356,3904,0,6],["Bg_Haka_Water",324,2016,0,6],null,["En_Ma2",628,4192,0,4],["En_Bom_Chu",468,5792,0,3],["En_Horse_Game_Check",404,4304,0,1],["Boss_Tw",1700,88832,0,9],["En_Rr",9140,9520,0,5],["En_Ba",944,7888,0,5],["En_Bx",648,2800,0,5],["En_Anubice",772,4784,0,5],["En_Anubice_Fire",484,3520,0,5],["Bg_Mori_Hashigo",448,2240,0,1],["Bg_Mori_Hashira4",348,1424,0,1],["Bg_Mori_Idomizu",336,1600,0,1],["Bg_Spot16_Doughnut",324,1456,0,6],["Bg_Bdan_Switch",464,5168,0,0],["En_Ma1",512,4832,0,4],["Boss_Ganon",1804,155104,0,9],["Boss_Sst",2696,50624,0,9],null,null,["En_Ny",680,6448,0,5],["En_Fr",948,10896,0,4],["Item_Shield",508,2576,0,7],["Bg_Ice_Shelter",500,4656,0,1],["En_Ice_Hono",428,4592,0,7],["Item_Ocarina",324,2000,0,7],null,null,["Magic_Dark",340,6224,1,7],["Demo_6K",644,11536,0,6],["En_Anubice_Tag",328,720,0,0],["Bg_Haka_Gate",356,4240,0,6],["Bg_Spot15_Saku",368,832,0,7],["Bg_Jya_Goroiwa",428,1920,0,6],["Bg_Jya_Zurerukabe",352,1712,0,1],null,["Bg_Jya_Cobra",4500,7456,0,6],["Bg_Jya_Kanaami",348,944,0,1],["Fishing",1344,109232,0,4],["Obj_Oshihiki",452,6832,0,6],["Bg_Gate_Shutter",364,1152,0,7],["Eff_Dust",1368,5088,0,4],["Bg_Spot01_Fusya",336,672,0,1],["Bg_Spot01_Idohashira",356,3072,0,6],["Bg_Spot01_Idomizu",328,784,0,1],["Bg_Po_Syokudai",416,2384,0,6],["Bg_Ganon_Otyuka",380,9792,0,6],["Bg_Spot15_Rrbox",372,3552,0,1],["Bg_Umajump",340,400,0,6],null,["Arrow_Fire",348,7872,1,7],["Arrow_Ice",348,7904,1,7],["Arrow_Light",348,7920,1,7],null,null,["Item_Etcetera",336,2256,0,6],["Obj_Kibako",396,3328,0,6],["Obj_Tsubo",400,4080,0,6],["En_Wonder_Item",448,3376,0,6],["En_Ik",1228,17984,0,9],["Demo_Ik",420,5392,0,4],["En_Skj",752,14656,0,5],["En_Skjneedle",472,784,0,5],["En_G_Switch",4840,6192,0,6],["Demo_Ext",372,2368,0,4],["Demo_Shd",324,9232,0,7],["En_Dns",696,5008,0,1],["Elf_Msg",320,1520,0,7],["En_Honotrap",564,5456,0,6],["En_Tubo_Trap",412,3232,0,6],["Obj_Ice_Poly",476,2480,0,6],["Bg_Spot03_Taki",360,2288,0,1],["Bg_Spot07_Taki",344,1472,0,1],["En_Fz",3012,8208,0,5],["En_Po_Relay",716,5904,0,4],["Bg_Relay_Objects",348,1968,0,1],["En_Diving_Game",904,6576,0,4],["En_Kusa",400,5344,0,6],["Obj_Bean",488,10128,0,1],["Obj_Bombiwa",392,1392,0,6],null,null,["Obj_Switch",584,7616,0,0],["Obj_Elevator",356,960,0,1],["Obj_Lift",352,2592,0,1],["Obj_Hsblock",344,1488,0,1],["En_Okarina_Tag",336,5376,0,6],["En_Yabusame_Mark",512,1744,0,6],["En_Goroiwa",452,9152,0,6],["En_Ex_Ruppy",340,4288,0,6],["En_Toryo",720,3216,0,4],["En_Daiku",828,5952,0,4],null,["En_Nwc",1828,2624,0,6],["En_Blkobj",348,1376,0,6],["Item_Inbox",320,352,0,4],["En_Ge1",684,8240,0,4],["Obj_Blockstop",316,416,0,6],["En_Sda",316,5888,0,9],["En_Clear_Tag",500,46496,0,9],["En_Niw_Lady",748,6400,0,4],["En_Gm",704,3376,0,4],["En_Ms",576,1776,0,4],["En_Hs",672,2976,0,4],["Bg_Ingate",344,912,0,6],["En_Kanban",476,12624,0,6],["En_Heishi3",696,2512,0,4],["En_Syateki_Niw",1104,8336,0,6],["En_Attack_Niw",728,4704,0,5],["Bg_Spot01_Idosoko",344,528,0,1],["En_Sa",732,8816,0,4],["En_Wonder_Talk",344,1680,0,6],["Bg_Gjyo_Bridge",344,1280,0,6],["En_Ds",480,3104,0,4],["En_Mk",632,3728,0,4],["En_Bom_Bowl_Man",596,5440,0,4],["En_Bom_Bowl_Pit",14068,2416,0,6],["En_Owl",1028,15264,0,4],["En_Ishi",396,37200,0,6],["Obj_Hana",392,784,0,6],["Obj_Lightswitch",436,5168,0,0],["Obj_Mure2",376,2592,0,6],["En_Go",1720,17984,0,4],["En_Fu",672,3408,0,4],null,["En_Changer",348,2528,0,6],["Bg_Jya_Megami",812,4576,0,1],["Bg_Jya_Lift",348,1360,0,1],["Bg_Jya_Bigmirror",356,2112,0,1],["Bg_Jya_Bombchuiwa",424,2864,0,1],["Bg_Jya_Amishutter",344,912,0,1],["Bg_Jya_Bombiwa",440,1472,0,1],["Bg_Spot18_Basket",524,4080,0,6],null,["En_Ganon_Organ",320,28672,0,9],["En_Siofuki",400,3504,0,1],["En_Stream",328,1424,0,1],null,["En_Mm",784,5664,0,4],["En_Ko",788,16704,0,4],["En_Kz",712,5536,0,4],["En_Weather_Tag",324,3824,0,6],["Bg_Sst_Floor",348,1376,0,1],["En_Ani",676,3440,0,4],["En_Ex_Item",372,4464,0,6],["Bg_Jya_Ironobj",420,3504,0,6],["En_Js",640,2512,0,4],["En_Jsjutan",360,22816,0,4],["En_Cs",820,4656,0,4],["En_Md",788,9840,0,4],["En_Hy",804,14656,0,4],["En_Ganon_Mant",5880,16928,0,9],["En_Okarina_Effect",324,960,0,7],["En_Mag",58136,20240,0,6],["Door_Gerudo",348,1520,0,7],["Elf_Msg2",320,1136,0,1],["Demo_Gt",408,22016,0,6],["En_Po_Field",716,14960,0,5],["Efc_Erupc",6332,2784,0,7],["Bg_Zg",348,1136,0,4],["En_Heishi4",760,3840,0,4],["En_Zl3",1040,32336,0,4],["Boss_Ganon2",2260,77344,0,9],["En_Kakasi",508,3392,0,4],["En_Takara_Man",552,2240,0,4],["Obj_Makeoshihiki",316,1168,0,6],["Oceff_Spot",368,3888,1,7],["End_Title",320,16688,0,7],null,["En_Torch",316,240,0,7],["Demo_Ec",408,14432,0,4],["Shot_Sun",408,1728,0,6],["En_Dy_Extra",356,1408,0,6],["En_Wonder_Talk2",352,1696,0,7],["En_Ge2",764,6560,0,4],["Obj_Roomtimer",324,592,0,5],["En_Ssh",1476,9712,0,4],["En_Sth",684,16560,0,4],["Oceff_Wipe",320,3408,1,7],["Oceff_Storm",328,7072,1,7],["En_Weiyer",704,6656,0,5],["Bg_Spot05_Soko",348,800,0,6],["Bg_Jya_1flift",428,1680,0,1],["Bg_Jya_Haheniron",420,2032,0,6],["Bg_Spot12_Gate",348,1040,0,1],["Bg_Spot12_Saku",348,1216,0,1],["En_Hintnuts",592,6704,0,5],["En_Nutsball",400,1568,0,6],["Bg_Spot00_Break",340,416,0,6],["En_Shopnuts",684,3856,0,5],["En_It",396,400,0,6],["En_GeldB",1236,21424,0,5],["Oceff_Wipe2",320,6000,1,7],["Oceff_Wipe3",320,5968,1,7],["En_Niw_Girl",748,2768,0,4],["En_Dog",640,4528,0,4],["En_Si",400,1280,0,7],["Bg_Spot01_Objects2",368,1216,0,1],["Obj_Comb",420,2144,0,6],["Bg_Spot11_Bakudankabe",416,1600,0,1],["Obj_Kibako2",424,1728,0,1],["En_Dnt_Demo",496,3360,0,6],["En_Dnt_Jiji",664,5392,0,4],["En_Dnt_Nomal",848,11792,0,6],["En_Guest",768,2464,0,4],["Bg_Bom_Guard",360,544,0,6],["En_Hs2",672,1504,0,4],["Demo_Kekkai",492,4832,0,7],["Bg_Spot08_Bakudankabe",564,1696,0,1],["Bg_Spot17_Bakudankabe",340,1760,0,1],null,["Obj_Mure3",352,2000,0,1],["En_Tg",508,1744,0,4],["En_Mu",572,2336,0,4],["En_Go2",1424,24608,0,4],["En_Wf",1228,17168,0,5],["En_Skb",820,6384,0,5],["Demo_Gj",616,15536,0,6],["Demo_Geff",344,2080,0,9],["Bg_Gnd_Firemeiro",360,1344,0,6],["Bg_Gnd_Darkmeiro",352,1984,0,6],["Bg_Gnd_Soulmeiro",400,2144,0,6],["Bg_Gnd_Nisekabe",316,368,0,6],["Bg_Gnd_Iceblock",356,4352,0,6],["En_Gb",1064,5936,0,4],["En_Gs",504,7840,0,6],["Bg_Mizu_Bwall",684,5328,0,1],["Bg_Mizu_Shutter",384,2048,0,6],["En_Daiku_Kakariko",760,5056,0,4],["Bg_Bowl_Wall",376,2432,0,6],["En_Wall_Tubo",352,1264,0,6],["En_Po_Desert",628,3520,0,1],["En_Crow",648,5792,0,5],["Door_Killer",628,5488,0,1],["Bg_Spot11_Oasis",324,1840,0,1],["Bg_Spot18_Futa",340,416,0,6],["Bg_Spot18_Shutter",344,1360,0,6],["En_Ma3",628,4016,0,4],["En_Cow",624,5216,0,4],["Bg_Ice_Turara",424,2096,0,6],["Bg_Ice_Shutter",344,1136,0,6],["En_Kakasi2",488,1824,0,6],["En_Kakasi3",508,4320,0,4],["Oceff_Wipe4",320,4064,1,7],["En_Eg",320,432,0,7],["Bg_Menkuri_Nisekabe",316,336,0,6],["En_Zo",1688,9648,0,4],["Obj_Makekinsuta",324,336,0,7],["En_Ge3",772,2896,0,4],["Obj_Timeblock",364,3136,0,7],["Obj_Hamishi",408,2128,0,6],["En_Zl4",736,18992,0,4],["En_Mm2",684,3520,0,4],["Bg_Jya_Block",340,624,0,6],["Obj_Warp2block",360,2864,0,7]];
+
+// Heap target solver: what to spawn, remove or break so the heap is filled exactly up to an address.
+// Model: NTSC 1.2 ZeldaArena with __osMalloc / __osMallocR / __osFree as in src/libc64/__osMalloc_n64.c,
+// Actor_Spawn overlay loading (normal = low end, persistent = high end, absolute = one shared space),
+// Actor_Delete freeing a normal overlay with its last instance. No timing: anything can go away later.
+/* global ACTORS */
+const Fill = (function () {
+    "use strict";
+    const NODE = 0x30;
+    const ABSOLUTE_SIZE = 0x24e0; // AM_FIELD_SIZE
+    const ADDR = {
+        arena: 0x801db2c0,
+        ovlTable: 0x800e8b70, // gActorOverlayTable: loadedRamAddr +0x10, numLoaded +0x1E, 0x20 per actor
+        actorLists: 0x801ca990, // play->actorCtx.actorLists
+        absoluteSpace: 0x801caac0,
+        collect: 0x801caaa4, tempCollect: 0x801caaa8,
+        script: 0x801caac8,
+        save: 0x8011ac80, // gSaveContext.save
+    };
+    const NEXT = 0x124; // Actor.next
+    const al16 = (n) => (n + 15) & ~15;
+    const hex = (v, w = 8) => (v >>> 0).toString(16).toUpperCase().padStart(w, "0");
+    const s16 = (v) => (v << 16) >> 16;
+
+    const ID = new Map();
+    ACTORS.forEach((a, i) => { if (a) ID.set(a[0], i); });
+    const actor = (name) => {
+        const i = ID.get(name);
+        if (i === undefined) throw new Error(`Unknown actor ${name}.`);
+        const [, instance, overlay, alloc, category] = ACTORS[i];
+        return { name, id: i, instance, overlay, alloc, category };
+    };
+
+    // ---------------- what Link can make ----------------
+    // parts: [actor, extra mallocs]; each part becomes one removable thing unless `together`.
+    // gone: how it goes away; then: what going away spawns (a new removable thing).
+    const SONG = (key, label, oceff, quest, extra) => ({ key, group: "Songs", label, age: "both", need: (s) => s.ocarina && s.quest(quest), parts: [[oceff], ...(extra || [])], together: true, gone: "the song effect ends" });
+    const ACTIONS = [
+        { key: "bomb", group: "Explosives", label: "Bomb", age: "both", need: (s) => s.ammo(2) > 0, parts: [["En_Bom"]], explosive: true, gone: "the bomb explodes" },
+        { key: "chu", group: "Explosives", label: "Bombchu", age: "both", need: (s) => s.item(8) !== 0xff && s.ammo(8) > 0, parts: [["En_Bom_Chu"]], explosive: true, gone: "the bombchu explodes", then: { key: "explosion", label: "Explosion", parts: [["En_Bom"]], explosive: true, gone: "the explosion ends" } },
+        { key: "seed", group: "Shooting", label: "Draw a slingshot seed", age: "child", need: (s) => s.item(6) !== 0xff && s.ammo(6) > 0, parts: [["En_Arrow"]], held: true, gone: "the seed goes (fire it or put the slingshot away)" },
+        { key: "arrow", group: "Shooting", label: "Draw an arrow", age: "adult", need: (s) => s.item(3) !== 0xff && s.ammo(3) > 0, parts: [["En_Arrow", [0x1e, 0x1e]]], held: true, gone: "the arrow goes (fire it or put the bow away)" },
+        ...[["fire", 4, 0x04, "Arrow_Fire"], ["ice", 0x0a, 0x0c, "Arrow_Ice"], ["light", 0x10, 0x12, "Arrow_Light"]].map(([n, slot, id, a]) => ({
+            key: `${n}Arrow`, group: "Shooting", label: `Draw ${n === "ice" ? "an" : "a"} ${n} arrow`, age: "adult", need: (s) => s.item(3) !== 0xff && s.item(slot) === id && s.magic && s.ammo(3) > 0,
+            parts: [["En_Arrow", [0x1e, 0x1e]], [a]], together: true, held: true, gone: `the ${n} arrow goes (fire it or put the bow away)`,
+        })),
+        { key: "nut", group: "Shooting", label: "Throw a Deku nut", age: "both", need: (s) => s.ammo(1) > 0, parts: [["En_Arrow"]], gone: "the nut vanishes (hits nothing)",
+            alt: { gone: "the nut hits something", then: { key: "flash", label: "Nut flash", parts: [["En_M_Fire1"]], gone: "the flash ends" } } },
+        { key: "boomerang", group: "Tools", label: "Throw the boomerang", age: "both", need: (s) => s.item(12) === 0x0e, parts: [["En_Boom"]], gone: "the boomerang comes back" },
+        { key: "hookshot", group: "Tools", label: "Take out the hookshot", age: "adult", need: (s) => s.item(9) === 0x0a || s.item(9) === 0x0b, parts: [["Arms_Hook"]], held: true, gone: "put the hookshot away" },
+        { key: "bugs", group: "Bottles", label: "Release bugs", age: "both", bottle: 0x1d, parts: [["En_Insect"], ["En_Insect"], ["En_Insect"]], gone: "catch a bug back (the game always gives you the oldest one out)", refill: true, note: "3 bugs" },
+        { key: "fish", group: "Bottles", label: "Release a fish", age: "both", bottle: 0x19, parts: [["En_Fish"]], gone: "the fish goes (catch it to refill the bottle, or it dies)", refill: true },
+        { key: "fairy", group: "Bottles", label: "Release a fairy", age: "both", bottle: 0x18, parts: [["En_Elf"]], gone: "the fairy goes (catch it to refill the bottle, or it vanishes)", refill: true },
+        { key: "blueFire", group: "Bottles", label: "Release blue fire", age: "both", bottle: 0x1c, parts: [["En_Ice_Hono"], ...Array(18).fill(["En_Ice_Hono"])], together: true, gone: "the blue fire burns out", note: "spreads into 18 small flames" },
+        { key: "dins", group: "Magic", label: "Cast Din's Fire", age: "both", need: (s) => s.item(5) === 0x05 && s.magic, parts: [["Magic_Fire"]], gone: "Din's Fire ends" },
+        { key: "nayrus", group: "Magic", label: "Cast Nayru's Love", age: "both", need: (s) => s.item(0x11) === 0x13 && s.magic, parts: [["Magic_Dark"]], gone: "Nayru's Love ends" },
+        { key: "farores", group: "Magic", label: "Cast Farore's Wind", age: "both", need: (s) => s.item(0x0b) === 0x0d && s.magic, parts: [["Magic_Wind", [0x36]]], gone: "the Farore's Wind effect ends" },
+        { key: "spin", group: "Magic", label: "Quick magic spin", age: "both", need: (s) => s.magic, parts: [["En_M_Thunder"]], gone: "the spin ends" },
+        { key: "chargedSpin", group: "Magic", label: "Charged magic spin", age: "both", need: (s) => s.magic, parts: [["En_M_Thunder"], ["Eff_Dust"]], together: true, gone: "the spin ends" },
+        SONG("zelda", "Play Zelda's Lullaby", "Oceff_Wipe", 0x0c),
+        SONG("saria", "Play Saria's Song", "Oceff_Wipe3", 0x0e),
+        SONG("epona", "Play Epona's Song", "Oceff_Wipe2", 0x0d),
+        SONG("sun", "Play the Sun's Song", "Oceff_Spot", 0x0f),
+        SONG("time", "Play the Song of Time", "Oceff_Wipe", 0x10),
+        SONG("storms", "Play the Song of Storms", "Oceff_Storm", 0x11, [["En_Okarina_Effect"]]),
+    ];
+    const ITEM00 = ["green rupee", "blue rupee", "red rupee", "heart", "bombs", "arrow", "heart piece", "heart container", "arrows (5)", "arrows (10)", "arrows (30)", "bombs", "nuts", "stick", "magic (large)", "magic (small)", "seeds", "small key", "fairy", "orange rupee", "purple rupee", "Deku shield", "Hylian shield", "Zora tunic", "Goron tunic", "bombs"];
+
+    // ---------------- reading a dump ----------------
+    function fromDump(bytes) {
+        const off = bytes.length === 0x1800000 ? 0xf64120 : 0;
+        const ram = bytes.subarray(off, off + 0x800000);
+        const ok = (a, n) => a >= 0x80000000 && a - 0x80000000 + n <= ram.length;
+        const u8 = (a) => (ok(a, 1) ? ram[a - 0x80000000] : null);
+        const u16 = (a) => (ok(a, 2) ? (ram[a - 0x80000000] << 8) | ram[a - 0x80000000 + 1] : null);
+        const u32 = (a) => (ok(a, 4) ? ((u16(a) << 16) | u16(a + 2)) >>> 0 : null);
+        const f32 = (a) => new DataView(ram.buffer, ram.byteOffset + a - 0x80000000, 4).getFloat32(0);
+
+        const blocks = [];
+        for (let a = ADDR.arena, i = 0; a && i < 20000; i++) {
+            const head = u32(a);
+            if (head === null || head >>> 16 !== 0x7373) break;
+            blocks.push({ a, s: u32(a + 4), free: (head & 0xffff) === 1 });
+            const next = u32(a + 8);
+            if (!next || next <= a) break;
+            a = next;
+        }
+        if (!blocks.length) throw new Error(`No heap node at ${hex(ADDR.arena)}. Is this an NTSC 1.2 RAM dump?`);
+
+        const actors = [];
+        for (let c = 0; c < 12; c++) {
+            let p = u32(ADDR.actorLists + c * 8 + 4);
+            for (let n = 0; p && n < 300; n++) {
+                const id = u16(p);
+                if (id === null || !ACTORS[id]) break;
+                actors.push({ inst: p, id, name: ACTORS[id][0], cat: c, params: u16(p + 0x1c), rot: [s16(u16(p + 0x14)), s16(u16(p + 0x16)), s16(u16(p + 0x18))], pos: [f32(p + 0x24), f32(p + 0x28), f32(p + 0x2c)] });
+                p = u32(p + NEXT);
+            }
+        }
+        const ovl = {};
+        ACTORS.forEach((x, i) => {
+            if (!x) return;
+            const at = u32(ADDR.ovlTable + i * 0x20 + 0x10);
+            if (at) ovl[x[0]] = { at, n: (u8(ADDR.ovlTable + i * 0x20 + 0x1e) << 24) >> 24 };
+        });
+        const S = ADDR.save;
+        const save = {
+            child: u32(S + 4) === 1,
+            item: (slot) => u8(S + 0x74 + slot),
+            ammo: (slot) => (u8(S + 0x74 + 0x18 + slot) << 24) >> 24,
+            quest: (bit) => (u32(S + 0x74 + 0x30) >>> bit) & 1,
+            magic: ((u8(S + 0x32) << 24) >> 24) > 0,
+            fullHealth: u16(S + 0x2e) === u16(S + 0x30),
+        };
+        save.ocarina = save.item(7) === 0x07 || save.item(7) === 0x08;
+        const bottles = [0x12, 0x13, 0x14, 0x15].map(save.item);
+        const collect = [u32(ADDR.collect), u32(ADDR.tempCollect)];
+        const collected = (flag) => (flag < 0x20 ? (collect[0] >>> flag) & 1 : (collect[1] >>> (flag - 0x20)) & 1);
+
+        const byInst = new Map(actors.map((x) => [x.inst, x]));
+        const byOvl = new Map(Object.entries(ovl).map(([name, o]) => [o.at, name]));
+        const absolute = u32(ADDR.absoluteSpace) || null;
+        for (const b of blocks) {
+            const d = b.a + NODE;
+            if (b.free) { b.kind = "free"; continue; }
+            if (byInst.has(d)) { const x = byInst.get(d); b.kind = "actor"; b.label = `${x.name} ${hex(x.params, 4)}`; }
+            else if (byOvl.has(d)) { b.kind = "code"; b.label = `${byOvl.get(d)} code`; }
+            else if (d === absolute) { b.kind = "code"; b.label = "absolute code space"; }
+            else { b.kind = "other"; b.label = "other allocation"; }
+        }
+
+        // Item_DropCollectible with func_8001F404's age/inventory conversion
+        const convert = (d) => {
+            if (!save.child) { if (d === 0x10) d = 0x08; else if (d === 0x0d) d = 0x00; }
+            else if (d === 0x08 || d === 0x09 || d === 0x0a) d = 0x10;
+            if (([0x04, 0x0b, 0x19].includes(d) && save.item(2) === 0xff) || ([0x08, 0x09, 0x0a].includes(d) && save.item(3) === 0xff) || ([0x0e, 0x0f].includes(d) && !save.magic) || (d === 0x10 && save.item(6) === 0xff)) return -1;
+            if (d === 3 && save.fullHealth) return 0;
+            return d;
+        };
+        const drop = (d, flag) => {
+            if (d < 0 || d >= 0x1a) return { parts: [], text: "nothing" };
+            if (d === 0x12) return { parts: [["En_Elf"]], text: "a fairy" };
+            const c = convert(d);
+            if (c < 0) return { parts: [], text: `nothing (${ITEM00[d]} needs an item you don't have)` };
+            if (collected(flag)) return { parts: [], text: `nothing (${ITEM00[c]} already collected)` };
+            return { parts: [["En_Item00"]], text: ITEM00[c] };
+        };
+        // Things in the scene the player can make go away
+        const where = (x) => `(${x.pos.map((v) => Math.round(v)).join(", ")})`;
+        const scene = [];
+        for (const x of actors) {
+            const p = x.params, base = { x, where: where(x), id: `${x.name}@${hex(x.inst)}` };
+            if (x.name === "Obj_Tsubo") { const d = drop(p & 0x1f, (p >> 9) & 0x3f); scene.push({ ...base, verb: "Break the pot", parts: d.parts, text: d.text, kill: true }); }
+            else if (x.name === "Obj_Kibako") { const d = drop(p & 0x1f, (p >> 8) & 0x3f); scene.push({ ...base, verb: "Break the small crate", parts: d.parts, text: d.text, kill: true }); }
+            else if (x.name === "Obj_Kibako2") {
+                const d = drop(x.rot[0], x.rot[2] & 0x3f), sw = !(p & 0x8000);
+                scene.push({ ...base, verb: "Break the large crate", parts: [...(sw ? [["En_Sw"]] : []), ...d.parts], text: (sw ? "a Skulltula, then " : "") + d.text, kill: true });
+            } else if (x.name === "En_Kusa") {
+                const type = p & 3, bugs = p & 0x10 ? [["En_Insect"], ["En_Insect"], ["En_Insect"]] : [];
+                if (type === 1) {
+                    const sd = drop(0x10, 0), hd = drop(0x03, 0);
+                    if (sd.parts.length !== hd.parts.length) scene.push({ ...base, verb: "Cut the bush", skip: `random: ${sd.text} or ${hd.text}` });
+                    else scene.push({ ...base, verb: "Cut the bush", parts: [...sd.parts, ...bugs], text: (sd.parts.length ? `${sd.text} or ${hd.text}` : "nothing") + (bugs.length ? ", plus 3 bugs" : ""), kill: false });
+                } else scene.push({ ...base, verb: "Cut the bush", skip: "its drop is random" });
+            } else if (x.name === "En_Item00") scene.push({ ...base, verb: "Collect the item", parts: [], text: "", kill: true });
+            else if (x.name === "En_Dekubaba") {
+                // EnDekubaba_ShrinkDie: Item_DropCollectible(ITEM00_NUTS), three for a big one, then Actor_Kill
+                const c = convert(0x0c), nuts = c < 0 ? [] : Array((p & 0xff) === 1 ? 3 : 1).fill(["En_Item00"]);
+                scene.push({ ...base, verb: "Kill the Deku Baba", parts: nuts, text: nuts.length > 1 ? "3 Deku nuts" : "a Deku nut", kill: true, note: "a sword kill; a hit that sets its drop flag drops at random instead" });
+            }
+            else if (x.cat === 5) scene.push({ ...base, verb: `Kill the ${x.name}`, parts: [], text: "", kill: true, note: "ignores its drop and death effects" });
+        }
+        return { blocks, actors, ovl, save, scene, absolute, bottles, format: off ? "Dolphin Wii VC MEM1" : "raw RDRAM", script: u32(ADDR.script) };
+    }
+
+
+    // A starting heap from just an address: one large free block from there up, nothing loaded.
+    function fromAddress(start) {
+        if (start % 16) throw new Error("The start address must be 16-byte aligned (it's where a heap block's data begins).");
+        const top = Math.min(0x80800000, start + 0x200000);
+        return { blocks: [{ a: start - NODE, s: top - start, free: true, kind: "free" }], actors: [], ovl: { En_Elf: { at: 0, n: 1 } }, scene: [], absolute: null, save: null, bottles: null, addressOnly: true };
+    }
+
+    // ---------------- allocator on the node chain ----------------
+    function malloc(B, size, label, kind) {
+        size = al16(size);
+        for (let i = 0; i < B.length; i++) {
+            const b = B[i];
+            if (!b.free || b.s < size) continue;
+            let s = b.s;
+            if (size + NODE < b.s) { B.splice(i + 1, 0, { a: b.a + NODE + size, s: b.s - size - NODE, free: true, kind: "free" }); s = size; }
+            B[i] = { a: b.a, s, free: false, label, kind };
+            return b.a + NODE;
+        }
+        return null;
+    }
+    function mallocR(B, size, label, kind) {
+        size = al16(size);
+        for (let i = B.length - 1; i >= 0; i--) {
+            const b = B[i];
+            if (!b.free || b.s < size) continue;
+            if (size + NODE < b.s) {
+                const nb = { a: b.a + b.s - size, s: size, free: false, label, kind };
+                B[i] = { ...b, s: b.s - size - NODE };
+                B.splice(i + 1, 0, nb);
+                return nb.a + NODE;
+            }
+            B[i] = { a: b.a, s: b.s, free: false, label, kind };
+            return b.a + NODE;
+        }
+        return null;
+    }
+    function release(B, ptr) {
+        const i = B.findIndex((b) => b.a === ptr - NODE);
+        if (i < 0 || B[i].free) return;
+        B[i] = { a: B[i].a, s: B[i].s, free: true, kind: "free" };
+        if (i + 1 < B.length && B[i + 1].free) { B[i] = { ...B[i], s: B[i].s + NODE + B[i + 1].s }; B.splice(i + 1, 1); }
+        if (i > 0 && B[i - 1].free) { B[i - 1] = { ...B[i - 1], s: B[i - 1].s + NODE + B[i].s }; B.splice(i, 1); }
+    }
+    function tag(B, ptr, step) {
+        const i = B.findIndex((b) => b.a === ptr - NODE);
+        if (i >= 0) B[i] = { ...B[i], step };
+    }
+
+    // ---------------- state ----------------
+    // st: { B blocks, ovl code refcounts, abs absolute space, live things that can go away, bottles, used scene ids }
+    const clone = (st) => ({ B: st.B.slice(), ovl: { ...st.ovl }, abs: st.abs, live: st.live.slice(), bottles: { ...st.bottles }, used: st.used, seq: st.seq });
+    // Actor_Spawn: code (if not loaded), instance, then Init allocations.
+    function spawnPart(st, name, extras, step) {
+        const A = actor(name), out = { name, ptrs: [] };
+        if (A.overlay && !st.ovl[name]) {
+            if (A.alloc === 1) {
+                if (!st.abs) {
+                    const p = mallocR(st.B, ABSOLUTE_SIZE, "absolute code space", "code");
+                    if (p === null) return null;
+                    st.abs = p; tag(st.B, p, step); out.code = p; out.codeWhat = "absolute code space";
+                }
+            } else {
+                const p = (A.alloc === 2 ? mallocR : malloc)(st.B, A.overlay, `${name} code`, "code");
+                if (p === null) return null;
+                st.ovl[name] = { at: p, n: 0 }; tag(st.B, p, step); out.code = p; out.codeWhat = `${name} code`;
+            }
+        }
+        const inst = malloc(st.B, A.instance, name, "actor");
+        if (inst === null) return null;
+        tag(st.B, inst, step);
+        out.inst = inst; out.ptrs.push(inst);
+        if (st.ovl[name]) st.ovl[name] = { ...st.ovl[name], n: st.ovl[name].n + 1 };
+        for (const e of extras || []) {
+            const p = malloc(st.B, e, `${name} table`, "other");
+            if (p === null) return null;
+            tag(st.B, p, step); out.ptrs.push(p);
+        }
+        return out;
+    }
+    // Actor_Delete: instance and its tables freed; a normal overlay is freed with its last instance.
+    function deletePart(st, name, ptrs) {
+        for (const p of ptrs) release(st.B, p);
+        const o = st.ovl[name];
+        if (!o) return null;
+        const n = o.n - 1;
+        if (n <= 0 && actor(name).alloc === 0 && o.at) { release(st.B, o.at); const c = { ...st.ovl }; delete c[name]; st.ovl = c; return o.at; }
+        st.ovl = { ...st.ovl, [name]: { ...o, n } };
+        return null;
+    }
+    // Spawn a thing's parts and register what can later go away.
+    function spawnThing(st, def, step) {
+        const made = [];
+        for (const [name, ex] of def.parts) {
+            const r = spawnPart(st, name, ex, step);
+            if (!r) return null;
+            made.push(r);
+        }
+        const unit = (ms) => ({ id: ++st.seq, step, key: def.key, label: def.label, gone: def.gone, alt: def.alt, then: def.then, explosive: !!def.explosive, held: !!def.held, refill: def.refill ? def.bottle : null, parts: ms.map((m) => [m.name, m.ptrs]) });
+        if (made.length) {
+            if (def.together || made.length === 1) st.live.push(unit(made));
+            else for (const m of made) st.live.push(unit([m]));
+        }
+        return made;
+    }
+    // Things with the same footprint and the same way of going away are interchangeable.
+    const liveKey = (st) => st.live.map((l) => `${l.gone}${l.alt ? "+" : ""}${l.held ? "h" : ""}${l.explosive ? "x" : ""}${l.refill || ""}:${l.parts.map((p) => p[1].join("+")).join("/")}`).sort().join(",");
+    const key = (st) => st.B.filter((b) => b.free).map((b) => b.a.toString(36) + "." + b.s.toString(36)).join(",") + "|" + Object.keys(st.ovl).sort().join(",") + "|" + (st.abs || "") + "|" + liveKey(st) + "|" + JSON.stringify(st.bottles) + "|" + [...st.used].sort().join(",");
+    const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+    // ---------------- search ----------------
+    // What will land at the address: one of Link's actions ({ key }) or any actor by name ({ actor }).
+    function landDef(land, dump) {
+        if (!land) throw new Error("Choose what will land there.");
+        if (land.scene) {
+            // the drop from breaking, cutting or killing something in the scene, done as the last step
+            const s = ((dump && dump.scene) || []).find((x) => x.id === land.scene);
+            if (!s || s.skip || !s.parts.length) throw new Error("That scene item doesn't drop anything the page can place.");
+            return { key: "land", label: `${s.verb} at ${s.where}`, parts: s.parts, gone: "the drop goes", byName: true, scene: s };
+        }
+        if (land.key) {
+            const a = ACTIONS.find((x) => x.key === land.key);
+            if (!a) throw new Error(`Unknown item ${land.key}.`);
+            return a;
+        }
+        const A = actor(String(land.actor || "").trim());
+        return { key: "land", label: A.name, parts: [[A.name]], gone: `the ${A.name} goes`, byName: true };
+    }
+    // Spawn the lander on a copy of st; returns where its parts went and which one starts at X, or null.
+    function tryLand(st, L, X, step) {
+        const live = st.live;
+        if (!L.byName) {
+            if (L.explosive && live.filter((l) => l.explosive).length >= 3) return null;
+            if (L.held && live.some((l) => l.held)) return null;
+            if (L.bottle && !(st.bottles[L.bottle] > 0)) return null;
+        }
+        const s2 = clone(st);
+        if (L.scene && st.used.has(L.scene.id)) return null;
+        const made = spawnThing(s2, L, step);
+        if (!made) return null;
+        if (L.scene) {
+            // the drop spawns first, then the thing that dropped it is removed
+            s2.used = new Set(s2.used); s2.used.add(L.scene.id);
+            if (L.scene.kill) deletePart(s2, L.scene.x.name, [L.scene.x.inst]);
+        }
+        for (const m of made) {
+            if (m.inst === X) return { st: s2, made, what: L.scene ? `The drop (${m.name})` : m.name };
+            if (m.code === X) return { st: s2, made, what: m.codeWhat };
+            if (m.ptrs.slice(1).includes(X)) return { st: s2, made, what: `${m.name} table` };
+        }
+        return null;
+    }
+    // Lists every distinct way it finds to make the chosen thing land exactly at X, fewest steps first.
+    function solve(dump, opts) {
+        const X = opts.address;
+        if (X % 16) return { options: [], reason: `Allocations start on 16-byte boundaries, so ${hex(X)} can never be one. Try ${hex(X - (X % 16))} or ${hex(X - (X % 16) + 16)}.` };
+        const L = landDef(opts.land, dump);
+        const acts = ACTIONS.filter((a) => opts.on[a.key]);
+        const scene = (dump.scene || []).filter((s) => !s.skip && (!opts.useScene || opts.useScene(s)) && !(L.scene && s.id === L.scene.id));
+        // Things in the scene that change the heap the same way (bushes with the same drop that stay put) are
+        // interchangeable: the search uses the first one left and lists the others as alternatives.
+        const groups = [], gi = new Map();
+        for (const s of scene) {
+            const sig = s.kill ? s.id : `${s.verb}|${JSON.stringify(s.parts)}|${s.text}`;
+            if (!gi.has(sig)) { gi.set(sig, groups.length); groups.push([]); }
+            groups[gi.get(sig)].push(s);
+        }
+        const sizeOf = (parts) => parts.reduce((t, [n, ex = []]) => { const A = actor(n); return t + al16(A.instance) + NODE + ex.reduce((u, e) => u + al16(e) + NODE, 0) + (A.alloc === 0 ? al16(A.overlay) + NODE : 0); }, 0);
+        const maxBytes = Math.max(1, ...acts.map((a) => sizeOf(a.parts)), ...scene.map((s) => sizeOf(s.parts)), sizeOf([["En_Bom"]]), sizeOf([["En_M_Fire1"]]));
+        const need = (st) => {
+            for (const b of st.B) if (b.free && b.a <= X - NODE && X + 16 <= b.a + NODE + b.s) return X - NODE - b.a;
+            return -1;
+        };
+        const coverable = (st) => st.live.length > 0 || scene.some((s) => s.kill && !st.used.has(s.id));
+        // bottles: count of each content, plus empty ones
+        const bottles = { empty: 0 };
+        if (dump.bottles) for (const b of dump.bottles) { if (b === 0x14) bottles.empty++; else if (b !== 0xff) bottles[b] = (bottles[b] || 0) + 1; }
+        // inventory isn't checked: a ticked bottle item gets a bottle of it if the save has none
+        for (const a of ACTIONS) if (a.bottle && (opts.on[a.key] || (opts.land && opts.land.key === a.key)) && !(bottles[a.bottle] > 0)) bottles[a.bottle] = 1;
+        const start = { B: dump.blocks.map((b) => ({ ...b })), ovl: { ...dump.ovl }, abs: dump.absolute, live: [], bottles, used: new Set(), seq: 0 };
+        if (need(start) < 0 && !coverable(start)) return { options: [], reason: `${hex(X)} isn't in free memory, and nothing allowed here can free it.` };
+
+        const heap = [];
+        const push = (x) => { heap.push(x); let i = heap.length - 1; while (i) { const p = (i - 1) >> 1; if (heap[p].f <= x.f) break; heap[i] = heap[p]; heap[i = p] = x; } };
+        const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && heap[l].f < (m === i ? last.f : heap[m].f)) m = l; if (r < heap.length && heap[r].f < (m === i ? last.f : heap[m].f)) m = r; if (m === i) break; heap[i] = heap[m]; i = m; } heap[i] = last; } return top; };
+        const landBytes = sizeOf(L.parts);
+        const hOf = (st) => { const n = need(st); return n < 0 ? 1 : Math.ceil(Math.max(0, n - landBytes) / maxBytes); };
+        // One move from a state: make something, something made earlier goes away, or use a scene group.
+        // Deterministic, so a queued state is kept as (parent, move) and rebuilt from the start when popped.
+        const moves = (st) => {
+            const out = [], live = st.live;
+            const explosives = live.filter((l) => l.explosive).length;
+            const holding = live.some((l) => l.held);
+            for (const a of acts) {
+                if (a.explosive && explosives >= 3) continue; // z_player.c: no new explosive while 3 are live
+                if (a.held && holding) continue; // one drawn/held item at a time
+                if (a.bottle && !(st.bottles[a.bottle] > 0)) continue;
+                out.push({ t: 0, a });
+            }
+            // Bottle bugs: a catch always takes the oldest bug out (each offers the item; the last to ask wins, and
+            // category lists run newest-first). Left alone they dig away after 200-240 frames, modeled as all at once.
+            const bugs = live.filter((l) => l.key === "bugs");
+            for (const l of live) { if (l.key === "bugs") continue; out.push({ t: 1, id: l.id, alt: false }); if (l.alt) out.push({ t: 1, id: l.id, alt: true }); }
+            if (bugs.length) { if ((st.bottles.empty || 0) > 0) out.push({ t: 1, id: Math.min(...bugs.map((l) => l.id)), alt: false }); out.push({ t: 3 }); }
+            groups.forEach((grp, gi) => { if (grp.some((x) => !st.used.has(x.id))) out.push({ t: 2, gi }); });
+            return out;
+        };
+        const apply = (st0, mv, g) => {
+            const st = clone(st0);
+            if (mv.t === 0) {
+                const a = mv.a;
+                const made = spawnThing(st, a, g);
+                if (!made) return null;
+                if (a.bottle) st.bottles = { ...st.bottles, [a.bottle]: st.bottles[a.bottle] - 1, empty: (st.bottles.empty || 0) + 1 };
+                return { st, step: { label: a.label, group: a.group, made, freed: [] } };
+            }
+            if (mv.t === 1) {
+                const l = st0.live.find((x) => x.id === mv.id);
+                const v = mv.alt ? l.alt : { gone: l.gone, then: l.then };
+                st.live = st.live.filter((x) => x.id !== l.id);
+                let made = [];
+                if (v.then) { made = spawnThing(st, v.then, g); if (!made) return null; }
+                const freed = [];
+                for (const [name, ptrs] of l.parts) { freed.push([name, ptrs[0]]); const c = deletePart(st, name, ptrs); if (c) freed.push([`${name} code`, c]); }
+                if (l.refill && (st.bottles.empty || 0) > 0) st.bottles = { ...st.bottles, [l.refill]: (st.bottles[l.refill] || 0) + 1, empty: st.bottles.empty - 1 };
+                return { st, step: { label: `${cap(v.gone)} (from step ${l.step})`, made, freed, removal: true } };
+            }
+            if (mv.t === 3) {
+                const bugs = st0.live.filter((l) => l.key === "bugs");
+                st.live = st.live.filter((l) => l.key !== "bugs");
+                const freed = [];
+                for (const l of bugs) for (const [name, ptrs] of l.parts) { freed.push([name, ptrs[0]]); const c = deletePart(st, name, ptrs); if (c) freed.push([`${name} code`, c]); }
+                return { st, step: { label: `The bugs dig away (from step ${Math.min(...bugs.map((l) => l.step))})`, made: [], freed, removal: true } };
+            }
+            const left = groups[mv.gi].filter((x) => !st0.used.has(x.id));
+            const s = left[0];
+            st.used = new Set(st.used); st.used.add(s.id);
+            let made = [];
+            if (s.parts.length) { made = spawnThing(st, { key: "drop", label: s.parts[0][0] === "En_Sw" ? "Skulltula and drop" : "Drop", parts: s.parts, gone: "the drop goes (collect it, or it despawns)" }, g); if (!made) return null; }
+            const freed = [];
+            if (s.kill) {
+                freed.push([s.x.name, s.x.inst]);
+                const c = deletePart(st, s.x.name, [s.x.inst]);
+                if (c) freed.push([`${s.x.name} code (last one)`, c]);
+            }
+            return { st, step: { label: `${s.verb} at ${s.where}`, made, freed, drop: s.text, note: s.note, others: left.slice(1).map((x) => x.verb === s.verb ? `at ${x.where}` : `${x.verb} at ${x.where}`) } };
+        };
+        const rebuild = (node) => {
+            const path = [];
+            for (let n = node; n.parent; n = n.parent) path.push(n);
+            let st = start;
+            const steps = [];
+            for (let i = path.length - 1; i >= 0; i--) {
+                const n = path[i], r = apply(st, n.mv, n.g);
+                st = r.st;
+                r.step.alts = [...(r.step.others || []), ...(n.alts || [])];
+                steps.push(r.step);
+            }
+            return { st, steps };
+        };
+        // seen states are kept as a 53-bit hash of their key
+        const hash = (str) => {
+            let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+            for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); }
+            h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+            h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+            return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+        };
+        // The same state key as key(), hashed from its numbers directly (much faster than hashing the string).
+        const sh = new Map();
+        const strH = (x) => { let v = sh.get(x); if (v === undefined) { v = hash(String(x)) | 0; sh.set(x, v); } return v; };
+        // int32 mixing only (keeps the hot path in small integers)
+        const mix = (h, v) => { h = Math.imul(h ^ v, 0x27d4eb2d); return h ^ (h >>> 15); };
+        // The same state as key(), packed into a short string of 16-bit units (the Map hashes it natively).
+        const ids = new Map();
+        const idOf = (x) => { let v = ids.get(x); if (v === undefined) { v = ids.size + 1; ids.set(x, v); } return v; };
+        const fastKey = (st) => {
+            const c = [];
+            const n32 = (v) => { c.push(v >>> 16, v & 0xffff); };
+            for (const blk of st.B) if (blk.free) { n32(blk.a); n32(blk.s); }
+            c.push(0xfff0); c.push(...Object.keys(st.ovl).map(idOf).sort((p, q) => p - q));
+            c.push(0xfff1); n32(st.abs || 0);
+            const ls = st.live.map((l) => {
+                let x = String.fromCharCode(idOf(l.gone), (l.alt ? 1 : 0) | (l.held ? 2 : 0) | (l.explosive ? 4 : 0) | ((l.refill || 0) << 3));
+                for (const p of l.parts) { x += "|"; for (const q of p[1]) x += String.fromCharCode(q >>> 16, q & 0xffff); }
+                return x;
+            }).sort();
+            c.push(0xfff2);
+            for (const k of Object.keys(st.bottles).sort()) c.push(idOf(k), st.bottles[k] & 0xffff);
+            c.push(0xfff3); c.push(...[...st.used].map(idOf).sort((p, q) => p - q));
+            return String.fromCharCode.apply(null, c) + "#" + ls.join(",");
+        };
+        // Recently made states stay on their node (up to CACHE of them); older ones are rebuilt from the nearest ancestor that kept its state.
+        const CACHE = opts.cache ?? 60000, cached = [];
+        let evict = 0;
+        const keep = (node, st) => { node.st = st; cached.push(node); if (cached.length - evict > CACHE) { cached[evict].st = null; cached[evict++] = null; if (evict > 4 * CACHE) { cached.splice(0, evict); evict = 0; } } };
+        const stateOf = (node) => {
+            if (node.st) return node.st;
+            const path = [];
+            let n = node;
+            for (; !n.st; n = n.parent) path.push(n);
+            let st = n.st;
+            for (let i = path.length - 1; i >= 0; i--) st = apply(st, path[i].mv, path[i].g).st;
+            return st;
+        };
+        push({ parent: null, g: 0, f: hOf(start), st: start });
+        const seen = new Map([[fastKey(start), 0]]);
+        const options = [], bySig = new Map();
+        let nodes = 0, stopped = null;
+        const t0 = Date.now(), maxSteps = opts.maxSteps || 8, maxOptions = opts.maxOptions || 20;
+        while (heap.length) {
+            if (options.length >= maxOptions) { stopped = "limit"; break; }
+            if (++nodes > (opts.maxNodes || 250000)) { stopped = "budget"; break; }
+            if ((nodes & 255) === 0 && Date.now() - t0 > (opts.maxMs || 20000)) { stopped = "time"; break; }
+            const cur = pop();
+            const cst = stateOf(cur);
+            if (need(cst) >= 0) {
+                // spawn the chosen thing now: an option only if it (or its code or table) starts exactly at X
+                const hit = tryLand(cst, L, X, "land");
+                if (hit) {
+                    const csteps = rebuild(cur).steps;
+                    // the same things in a different order count as one option
+                    const sig = csteps.map((x) => x.label.replace(/ \(from step \d+\)$/, "")).sort().join("|");
+                    const same = bySig.get(sig);
+                    if (same) { same.orders++; same.otherHeaps.push(cst.B); }
+                    else { const o = { otherHeaps: [], steps: csteps, land: { label: L.label, made: hit.made, what: hit.what }, before: cst.B, blocks: hit.st.B, orders: 1, node: cur, final: hit.st }; bySig.set(sig, o); options.push(o); }
+                    continue;
+                }
+            }
+            if (cur.g >= maxSteps) continue;
+            const g = cur.g + 1;
+            const children = new Map();
+            for (const mv of moves(cst)) {
+                const r = apply(cst, mv, g);
+                if (!r || (need(r.st) < 0 && !coverable(r.st))) continue;
+                const k = fastKey(r.st);
+                const c = children.get(k);
+                if (c) { if (c.label !== r.step.label && !c.alts.includes(r.step.label)) c.alts.push(r.step.label); continue; }
+                if (seen.has(k) && seen.get(k) <= g) continue;
+                seen.set(k, g);
+                children.set(k, { node: { parent: cur, mv, g, f: g + hOf(r.st), alts: null, st: null }, st: r.st, label: r.step.label, alts: [] });
+            }
+            for (const c of children.values()) { if (c.alts.length) c.node.alts = c.alts; keep(c.node, c.st); push(c.node); }
+        }
+        // simplest first: fewer steps, then everyday items over bottles, magic and songs
+        const W = { Explosives: 0, Shooting: 0, Tools: 0.1, Bottles: 0.2, Magic: 0.3, Songs: 0.3 };
+        const weight = (o) => o.steps.reduce((t, x) => t + (x.removal ? 0.05 : x.group ? W[x.group] || 0 : 0.1), 0);
+        options.sort((a, b) => a.steps.length - b.steps.length || weight(a) - weight(b));
+        // Catching released bugs, fish or fairies back: at which points it leaves the landing unchanged.
+        // A catch always takes the oldest bug out, and needs an empty bottle.
+        const recatch = (o) => {
+            const path = [];
+            for (let n = o.node; n.parent; n = n.parent) path.push(n);
+            path.reverse();
+            const states = [start];
+            for (const n of path) states.push(apply(states[states.length - 1], n.mv, n.g).st);
+            const isBug = (l) => l.key === "bugs";
+            const oldestBug = (st) => st.live.filter(isBug).reduce((m, l) => (!m || l.id < m.id ? l : m), null);
+            const out = [];
+            for (const kind of ["bugs", "fish", "fairy"]) {
+                const name = { bugs: "bug", fish: "fish", fairy: "fairy" }[kind];
+                if (!states.some((st) => st.live.some((l) => l.key === kind))) continue;
+                const safe = [], unsafe = [];
+                for (let k = 1; k <= path.length; k++) {
+                    const sk = states[k];
+                    const u = kind === "bugs" ? oldestBug(sk) : sk.live.find((l) => l.key === kind);
+                    if (!u || !((sk.bottles.empty || 0) > 0)) continue;
+                    let st = apply(sk, { t: 1, id: u.id, alt: false }, 0).st, ok = true;
+                    for (let j = k; j < path.length && ok; j++) {
+                        let mv = path[j].mv;
+                        if (mv.t === 1) {
+                            const l0 = states[j].live.find((l) => l.id === mv.id);
+                            if (l0 && isBug(l0)) { const ob = oldestBug(st); if (!ob || !((st.bottles.empty || 0) > 0)) { ok = false; break; } mv = { ...mv, id: ob.id }; }
+                            else if (!st.live.some((l) => l.id === mv.id)) { ok = false; break; }
+                        }
+                        if (mv.t === 3 && !st.live.some(isBug)) { ok = false; break; }
+                        if (mv.t === 0 && mv.a.bottle && !(st.bottles[mv.a.bottle] > 0)) { ok = false; break; }
+                        const r = apply(st, mv, path[j].g);
+                        if (!r) { ok = false; break; }
+                        st = r.st;
+                    }
+                    (ok && tryLand(st, L, X, "land") ? safe : unsafe).push({ after: k, ptr: u.parts[0][1][0] });
+                }
+                const fin = o.final.live.filter((l) => l.key === kind);
+                const after = fin.length > 0 && (o.final.bottles.empty || 0) > 0
+                    ? { ptr: (kind === "bugs" ? fin.reduce((m, l) => (l.id < m.id ? l : m)) : fin[0]).parts[0][1][0] } : null;
+                out.push({ name, safe, unsafe, after });
+            }
+            return out;
+        };
+        // How long each temporary thing has to stay: try removing it after each step and see if the landing survives.
+        const timing = (o) => {
+            const path = [];
+            for (let nd = o.node; nd.parent; nd = nd.parent) path.push(nd);
+            path.reverse();
+            const n = path.length;
+            const moves = path.map((nd) => ({ mv: nd.mv, g: nd.g }));
+            const states = [start];
+            for (const m of moves) states.push(apply(states[states.length - 1], m.mv, m.g).st);
+            const landsAfter = (list) => {
+                let st = start;
+                for (const m of list) {
+                    const mv = m.mv;
+                    if (mv.t === 1 && !st.live.some((l) => l.id === mv.id)) return false;
+                    if (mv.t === 3 && !st.live.some((l) => l.key === "bugs")) return false;
+                    if (mv.t === 0 && mv.a.bottle && !(st.bottles[mv.a.bottle] > 0)) return false;
+                    if (mv.t === 0 && mv.a.explosive && st.live.filter((l) => l.explosive).length >= 3) return false;
+                    if (mv.t === 0 && mv.a.held && st.live.some((l) => l.held)) return false;
+                    const r = apply(st, mv, m.g);
+                    if (!r) return false;
+                    st = r.st;
+                }
+                return !!tryLand(st, L, X, "land");
+            };
+            const out = [];
+            const seen = new Set();
+            for (let k = 1; k <= n; k++) for (const u of states[k].live) {
+                if (seen.has(u.id)) continue;
+                seen.add(u.id);
+                const c = k; // made at step c
+                let r = 0, fixed = false;
+                for (let j = c; j < n; j++) {
+                    const mv = moves[j].mv;
+                    if (mv.t === 1 && mv.id === u.id) { r = j + 1; const v = mv.alt ? u.alt : u; fixed = !!(v && v.then); break; }
+                    if (mv.t === 3 && u.key === "bugs") { r = j + 1; fixed = true; break; }
+                }
+                const label = (u.label || u.key) + (u.parts.length > 1 && u.key === "bugs" ? "" : "");
+                const what = { key: u.key, label, made: c, ptr: u.parts[0] && u.parts[0][1][0] };
+                if (r && fixed) { out.push({ ...what, kind: "fixed", at: r }); continue; }
+                const base = r ? moves.filter((_, i) => i !== r - 1) : moves.slice();
+                // position p = removed right after original step p (p >= c); indices shift when step r was taken out
+                const safe = {};
+                for (let p = c; p <= n; p++) {
+                    if (r && p === r) continue; // same as p = r - 1 once step r is gone
+                    const idx = r && p >= r ? p - 1 : p;
+                    const list = [...base.slice(0, idx), { mv: { t: 1, id: u.id, alt: false }, g: 0 }, ...base.slice(idx)];
+                    safe[p] = landsAfter(list);
+                }
+                const stay = landsAfter(base);
+                if (!r) {
+                    let lo = null;
+                    for (let p = n; p >= c && safe[p]; p--) lo = p;
+                    out.push({ ...what, kind: "stay", lo, last: n });
+                } else {
+                    const p0 = r - 1;
+                    let a = p0, b = p0;
+                    while (a - 1 >= c && (a - 1 === r || safe[a - 1])) a--;
+                    while (b + 1 <= n && (b + 1 === r || safe[b + 1])) b++;
+                    if (a === r) a++;
+                    out.push({ ...what, kind: "window", at: r, a, b, stay: stay && b === n });
+                }
+            }
+            return out;
+        };
+        for (const o of options) {
+            try { o.recatch = recatch(o); } catch (e) { o.recatch = []; }
+            try { o.timing = timing(o); } catch (e) { o.timing = []; }
+            delete o.node; delete o.final;
+        }
+        return { options, nodes, stopped, ms: Date.now() - t0 };
+    }
+
+
+    return { fromDump, fromAddress, solve, ACTIONS, actor, hex, ID, NODE, al16, ADDR, cap };
+})();
+if (typeof module !== "undefined") module.exports = Fill;
+
+</script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const hex = Fill.hex, NODE = Fill.NODE;
+let dump = null;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+
+
+// ---------- heap view ----------
+const COLOR = { free: "var(--free)", actor: "var(--actor)", code: "var(--code)", other: "var(--other)" };
+function heapView(blocks, target) {
+  const lo = blocks[0].a, last = blocks[blocks.length - 1], hi = last.a + NODE + last.s, span = hi - lo;
+  const pct = (a) => ((a - lo) / span) * 100;
+  const colorOf = (b) => (b.step ? "var(--new)" : COLOR[b.kind] || COLOR.other);
+  const strip = blocks.filter((b) => !b.free).map((b) => `<div title="${esc(`${hex(b.a + NODE)} ${b.label || ""} (0x${hex(b.s, 1)})`)}" style="left:${pct(b.a)}%;width:${((b.s + NODE) / span) * 100}%;background:${colorOf(b)}"></div>`).join("") +
+    (target ? `<div class="mark" style="left:${pct(target)}%"></div>` : "");
+  const rows = blocks.map((b) => {
+    const d = b.a + NODE, tgt = target === d;
+    const what = b.free ? "free" : esc(b.label || "allocation");
+    return `<tr class="${b.free ? "free" : ""} ${b.step ? "new" : ""} ${tgt ? "tgt" : ""}" ${tgt ? 'data-tgt="1"' : ""}><td><span class="dot" style="background:${colorOf(b)}"></span>${hex(d)}</td><td>0x${hex(b.s, 1)}</td><td class="c">${what}${b.step ? `<span class="tag">${b.step === "land" ? "lands" : `step ${b.step}`}</span>` : ""}${tgt ? (b.free ? ` ← next allocation lands here` : ` ← at the address`) : ""}</td></tr>`;
+  }).join("");
+  return `<div class="legend"><span><i style="background:var(--actor)"></i>actor</span><span><i style="background:var(--code)"></i>actor code</span><span><i style="background:var(--other)"></i>other</span><span><i style="background:var(--free);outline:1px solid var(--line)"></i>free</span>${blocks.some((b) => b.step) ? `<span><i style="background:var(--new)"></i>added by the steps</span>` : ""}${target ? `<span><i style="background:var(--target)"></i>target</span>` : ""}</div>
+    <div class="strip">${strip}</div><div class="axis"><span>${hex(lo + NODE)}</span><span>${hex(hi)}</span></div>
+    <div class="blocks"><table><tr><th>Starts at</th><th>Size</th><th>Contents</th></tr>${rows}</table></div>`;
+}
+function scrollToTarget(box) {
+  const row = box.querySelector("[data-tgt]"), wrap = box.querySelector(".blocks");
+  if (row && wrap) wrap.scrollTop = row.offsetTop - wrap.clientHeight / 2;
+}
+
+// ---------- items ----------
+let mode = "dump";
+function usable(a) {
+  if (mode === "addr") { const age = document.querySelector('input[name=age]:checked').value; return a.age === "both" || a.age === age ? "" : `${a.age} only`; }
+  if (!dump) return "";
+  const s = dump.save;
+  if (a.age !== "both" && (a.age === "child") !== s.child) return `${a.age} only`;
+  return ""; // inventory isn't checked: anything Link's age allows can be used
+}
+function renderItems() {
+  const box = $("items");
+  const groups = [...new Set(Fill.ACTIONS.map((a) => a.group))];
+  box.innerHTML = groups.map((g) => `<div class="igroup"><b>${g}</b><div class="fillers">${Fill.ACTIONS.filter((a) => a.group === g).map((a) => {
+    const why = usable(a);
+    return `<label class="filler${why ? " off" : ""}"><input type="checkbox" id="on_${a.key}" ${why ? "disabled" : "checked"}><span>${esc(a.label)}<small>${esc(why || a.note || "")}</small></span></label>`;
+  }).join("")}</div></div>`).join("");
+}
+renderItems();
+
+// ---------- what will land there ----------
+for (const a of ACTORS) if (a) $("actorNames").append(new Option(a[0]));
+function renderLand() {
+  const sel = $("land"), keep = sel.value;
+  const groups = [...new Set(Fill.ACTIONS.map((a) => a.group))];
+  sel.innerHTML = `<option value="">Choose…</option>` + groups.map((g) => `<optgroup label="${g}">${Fill.ACTIONS.filter((a) => a.group === g).map((a) => {
+    const why = usable(a);
+    return `<option value="${a.key}"${why ? " disabled" : ""}>${esc(a.label)}${why ? ` (${esc(why)})` : ""}</option>`;
+  }).join("")}</optgroup>`).join("") + sceneLand() + `<optgroup label="Anything else"><option value="@actor">Another actor, by name…</option></optgroup>`;
+  sel.value = [...sel.options].some((o) => o.value === keep && !o.disabled) ? keep : "";
+  $("landOther").hidden = sel.value !== "@actor";
+}
+// drops from things in the dump's scene: the break, cut or kill is the last step
+function sceneLand() {
+  const list = (mode === "dump" && dump ? dump.scene : []).filter((s) => !s.skip && s.parts && s.parts.length);
+  return list.length ? `<optgroup label="A drop from the scene (done last)">${list.map((s) => `<option value="@scene:${esc(s.id)}">${esc(s.verb)} at ${esc(s.where)} → ${esc(s.text)}</option>`).join("")}</optgroup>` : "";
+}
+function landChoice() {
+  const v = $("land").value;
+  if (!v) return null;
+  if (v.startsWith("@scene:")) return { scene: v.slice(7) };
+  if (v !== "@actor") return { key: v };
+  const name = $("landActor").value.trim();
+  return Fill.ID.has(name) ? { actor: name } : null;
+}
+renderLand();
+$("land").onchange = () => { $("landOther").hidden = $("land").value !== "@actor"; ready(); };
+$("landActor").oninput = ready;
+
+for (const r of document.querySelectorAll("input[name=mode]")) r.onchange = () => {
+  mode = r.value;
+  $("dumpMode").hidden = mode !== "dump"; $("addrMode").hidden = mode !== "addr";
+  $("out").innerHTML = "";
+  renderItems(); renderLand(); ready();
+};
+for (const r of document.querySelectorAll("input[name=age]")) r.onchange = () => { renderItems(); renderLand(); ready(); };
+$("startAddr").oninput = ready;
+function ready() { $("go").disabled = !landChoice() || (mode === "dump" ? !dump : !/^(0x)?[0-9a-f]{1,8}$/i.test($("startAddr").value.trim())); }
+
+// ---------- dump ----------
+$("dump").onchange = async () => {
+  const file = $("dump").files[0];
+  const st = $("dumpStatus");
+  st.className = "status"; dump = null; $("now").hidden = true; $("out").innerHTML = ""; ready();
+  if (!file) return;
+  try {
+    dump = Fill.fromDump(new Uint8Array(await file.arrayBuffer()));
+    dump.raw = new Uint8Array(await file.arrayBuffer());
+    st.textContent = `${dump.format}: ${dump.blocks.length} heap blocks, ${dump.actors.length} actors, ${dump.blocks.filter((b) => b.free).length} free gaps. ${dump.save.child ? "Child" : "Adult"} Link.` + (dump.script ? ` Cutscene pointer ${hex(dump.script)}.` : "");
+    $("heapNow").innerHTML = heapView(dump.blocks, null);
+    $("scene").innerHTML = dump.scene.length ? dump.scene.map((s) => s.skip
+      ? `<div class="brk skip"><input type="checkbox" disabled><span>${esc(s.verb)} at ${s.where}<small>Not used: ${esc(s.skip)}</small></span></div>`
+      : `<label class="brk"><input type="checkbox" checked data-id="${esc(s.id)}"><span>${esc(s.verb)} at ${s.where}<small>${[s.text ? `Drops ${esc(s.text)}` : "", s.kill ? `frees its block at ${hex(s.x.inst)}` : "the stump stays", s.note || ""].filter(Boolean).join("; ")}</small></span></label>`).join("")
+      : `<p class="muted">Nothing in the loaded rooms that Link can break, kill or collect.</p>`;
+    $("now").hidden = false;
+    renderItems(); renderLand(); ready();
+  } catch (err) { st.className = "status err"; st.textContent = err.message; }
+};
+
+const hexIn = (id, name) => {
+  const v = $(id).value.trim().replace(/^0x/i, "");
+  if (!/^[0-9a-f]{1,8}$/i.test(v)) throw new Error(`${name} must be hex.`);
+  return parseInt(v, 16) >>> 0;
+};
+const line = (m) => {
+  const parts = [`${m.name} at <span class="addr">${hex(m.inst)}</span>`];
+  if (m.code) parts.push(`${esc(m.codeWhat)} at <span class="addr">${hex(m.code)}</span>`);
+  if (m.ptrs && m.ptrs.length > 1) parts.push(`plus ${m.ptrs.slice(1).map((e) => `<span class="addr">${hex(e)}</span>`).join(", ")}`);
+  return parts.join(", ");
+};
+function stepsHTML(steps) {
+  return `<ol>${steps.map((s) => {
+    const bits = [];
+    if (s.made.length) bits.push(s.made.length > 4 ? `${s.made.length} actors from <span class="addr">${hex(s.made[0].inst)}</span>` : s.made.map(line).join("; "));
+    else if (s.drop) bits.push(`drops ${esc(s.drop)}`);
+    for (const [what, at] of s.freed) bits.push(`${esc(what)} at <span class="addr">${hex(at)}</span> freed`);
+    const alts = s.alts && s.alts.length ? ` <span class="alts">(or ${s.alts.map(esc).join(" / ")})</span>` : "";
+    return `<li><b>${esc(s.label)}</b>${alts} <span class="muted">→ ${bits.join(". ") || "nothing changes"}${s.note ? ` (${esc(s.note)})` : ""}</span></li>`;
+  }).join("")}</ol>`;
+}
+
+// ---------- solve in a worker ----------
+const workerURL = URL.createObjectURL(new Blob([$("engineSrc").textContent, `
+self.onmessage = (e) => {
+  const { mode, raw, start, address, on, scene, land, limits } = e.data;
+  try {
+    const d = mode === "dump" ? Fill.fromDump(raw) : Fill.fromAddress(start);
+    const ids = new Set(scene);
+    self.postMessage({ type: "done", r: Fill.solve(d, { address, on, land, useScene: (s) => ids.has(s.id), ...(limits || {}) }) });
+  } catch (err) { self.postMessage({ type: "error", message: err.message }); }
+};`], { type: "text/javascript" }));
+let worker = null;
+
+const LONGER = { maxOptions: 60, maxMs: 90000, maxNodes: 900000 };
+$("go").onclick = () => runSearch(null);
+function runSearch(limits) {
+  const out = $("out");
+  try {
+    const address = hexIn("addr", "The target address");
+    const start = mode === "addr" ? hexIn("startAddr", "The start address") : null;
+    if (mode === "addr" && address < start) throw new Error("The target has to be at or above where free memory starts.");
+    const land = landChoice();
+    if (!land) throw new Error($("land").value === "@actor" ? "That isn't an actor name the page knows (for example En_Item00)." : "Choose what will land there.");
+    const on = {};
+    for (const a of Fill.ACTIONS) on[a.key] = !!($("on_" + a.key) && $("on_" + a.key).checked);
+    const scene = mode === "dump" ? [...document.querySelectorAll("#scene input[data-id]:checked")].map((c) => c.dataset.id) : [];
+    if (worker) worker.terminate();
+    worker = new Worker(workerURL);
+    $("go").disabled = true; $("progress").textContent = limits ? "Searching for up to 90 seconds…" : "Searching…"; out.innerHTML = "";
+    worker.onmessage = (e) => {
+      worker.terminate(); worker = null; $("go").disabled = false; $("progress").textContent = "";
+      if (e.data.type === "error") { out.innerHTML = `<p class="verdict bad">${esc(e.data.message)}</p>`; return; }
+      show(e.data.r, address, limits);
+    };
+    worker.postMessage({ mode, raw: mode === "dump" ? dump.raw : null, start, address, on, scene, land, limits });
+  } catch (err) { out.innerHTML = `<p class="verdict bad">${esc(err.message)}</p>`; }
+};
+// how long each temporary thing has to stay for this option, next to how long it lasts on its own
+const LIFE = {
+  bomb: "explodes 70 frames after you pull it", chu: "explodes 120 frames after you pull it (sooner if it hits something)",
+  explosion: "about 10 frames", seed: "while you hold it; gone about 2 frames after any other action",
+  arrow: "while you hold it; gone about 2 frames after any other action", fireArrow: "while you hold it", iceArrow: "while you hold it", lightArrow: "while you hold it",
+  nut: "until it lands or hits something", flash: "a few frames", boomerang: "until it comes back (roughly 20–40 frames)",
+  hookshot: "while you hold it out", bugs: "digs away after 200–240 frames (random for each bug)", fish: "flops, then dies after a few hundred frames",
+  fairy: "until you catch it or it flies off", blueFire: "burns out after a while", drop: "about 240 frames, then it despawns",
+};
+function timingHTML(o) {
+  const t = o.timing || [];
+  if (!t.length) return "";
+  const need = (x) => {
+    if (x.kind === "fixed") return `goes at step ${x.at}, as listed`;
+    if (x.kind === "stay") return x.lo === null ? `<b>until it lands</b>` : x.lo === x.made ? "can go any time" : `<b>through step ${x.lo}</b>, then it can go`;
+    const before = x.b + 1 > (o.steps.length) ? "before it lands" : `before step ${x.b + 1}`;
+    if (x.stay) return x.a === x.made ? "can go any time" : `<b>through step ${x.a}</b>, then it can go`;
+    return x.a === x.made ? `<b>gone ${before}</b>` : `<b>through step ${x.a}</b>, gone ${before}`;
+  };
+  const NOUN = { bomb: "Bomb", chu: "Bombchu", explosion: "Explosion", seed: "Drawn seed", arrow: "Drawn arrow", nut: "Deku nut", flash: "Nut flash", boomerang: "Boomerang", hookshot: "Hookshot", bugs: "Bug", fish: "Fish", fairy: "Fairy", blueFire: "Blue fire", drop: "Drop" };
+  // a drawn seed or arrow is put away by Link's next action, so it can't be needed past one
+  const HELD = new Set(["seed", "arrow", "fireArrow", "iceArrow", "lightArrow", "hookshot"]);
+  const warn = (x) => {
+    if (!HELD.has(x.key) || x.kind === "fixed" || (x.kind === "stay" && x.lo === x.made)) return "";
+    const until = x.kind === "stay" ? (x.lo === null ? o.steps.length : x.lo) : x.a;
+    const later = o.steps.slice(x.made, until).findIndex((s) => !s.removal);
+    return later < 0 ? "" : `<br><span class="warn">Step ${x.made + later + 1} makes Link put it away; use an order where it comes later.</span>`;
+  };
+  const rows = t.map((x) => `<tr><td>${esc(NOUN[x.key] || x.label)} <span class="muted">(step ${x.made}${x.key === "bugs" ? `, at <span class="addr">${hex(x.ptr)}</span>` : ""})</span></td><td>${need(x)}${warn(x)}</td><td class="muted">${esc(LIFE[x.key] || (/^(zelda|saria|epona|sun|time|storms)$/.test(x.key) ? "the song's effect, a couple of seconds" : "its effect ends on its own"))}</td></tr>`).join("");
+  return `<details class="life"><summary>How long each thing has to stay</summary><table><tr><th>Thing (made at)</th><th>Has to stay</th><th>On its own (approx.)</th></tr>${rows}</table><p class="muted">"Through step N" means it can go any time after step N without moving where the thing lands. The page doesn't check frame timing; compare with the last column.</p></details>`;
+}
+// when a released bug, fish or fairy can be caught back without changing where the thing lands
+function recatchHTML(o) {
+  const lines = (o.recatch || []).map((c) => {
+    const which = (p) => c.name === "bug" ? ` (that catches the bug at <span class="addr">${hex(p)}</span>)` : "";
+    const ok = c.safe.map((x) => `after step ${x.after}${which(x.ptr)}`);
+    if (c.after) ok.push(`any time after it lands${which(c.after.ptr)}`);
+    const not = c.unsafe.length ? ` Not after step${c.unsafe.length > 1 ? "s" : ""} ${c.unsafe.map((x) => x.after).join(", ")}.` : "";
+    return ok.length ? `Catching a ${c.name} back is safe ${ok.join("; ")}.${not}` : `There's no point where catching a ${c.name} back leaves this landing intact.`;
+  });
+  return lines.length ? `<p class="muted">${lines.join("<br>")}${o.recatch.some((c) => c.name === "bug") ? " A catch always takes the oldest bug out and needs an empty bottle." : ""}</p>` : "";
+}
+function show(r, address, limits) {
+  const longer = r.stopped && !limits ? `<p><button type="button" class="more" id="longer">Search longer</button> <span class="muted">Up to 90 seconds and 60 options. Longer setups only show up once the shorter ones are listed.</span></p>` : "";
+  const out = $("out"), where = `<span class="addr">${hex(address)}</span>`;
+  if (!r.options.length) {
+    out.innerHTML = `<p class="verdict bad">No way found to make it land at ${where}.</p><p class="muted">${esc(r.reason || (r.stopped ? "The search hit its limit (8 steps or the time budget)." : "Every combination up to 8 steps was tried."))}</p>` + longer;
+    if ($("longer")) $("longer").onclick = () => runSearch(LONGER);
+    return;
+  }
+  const more = r.stopped === "limit" ? ` Showing the first ${r.options.length}; there are more.` : r.stopped ? " The search hit its time or size limit, so there may be more." : "";
+  out.innerHTML = `<p class="verdict ok">${r.options.length} option${r.options.length > 1 ? "s" : ""}, simplest first.</p><p class="muted">${more.trim()}</p>${longer}` +
+    r.options.map((o, i) => {
+      return `<div class="opt"><h3>Option ${i + 1} · ${o.steps.length ? `${o.steps.length} step${o.steps.length > 1 ? "s" : ""}` : "nothing to do"}</h3>
+        ${o.steps.length ? stepsHTML(o.steps) : ""}
+        <p>Then <b>${esc(o.land.label)}</b> <span class="muted">→ ${o.land.made.length > 4 ? `${o.land.made.length} actors from <span class="addr">${hex(o.land.made[0].inst)}</span>` : o.land.made.map(line).join("; ")}</span></p>
+        <p class="muted">${esc(o.land.what)} lands at ${where}.${o.orders > 1 ? ` The same steps also work in ${o.orders - 1} other order${o.orders > 2 ? "s" : ""} (the heap below can differ).` : ""}</p>
+        ${timingHTML(o)}
+        ${recatchHTML(o)}
+        <details data-i="${i}"><summary>Heap after</summary></details></div>`;
+    }).join("") +
+    `<p class="muted">Timing is ignored: things that go away on their own (bombs, nuts, the boomerang) are assumed to stay until a step says they go.</p>`;
+  if ($("longer")) $("longer").onclick = () => runSearch(LONGER);
+  for (const d of out.querySelectorAll("details[data-i]")) d.addEventListener("toggle", () => {
+    if (!d.open || d.dataset.done) return;
+    d.dataset.done = 1;
+    d.insertAdjacentHTML("beforeend", heapView(r.options[Number(d.dataset.i)].blocks, address));
+    scrollToTarget(d);
+  });
+}
+</script>
+</body>
+</html>
